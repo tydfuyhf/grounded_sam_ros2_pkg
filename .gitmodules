@@ -1,0 +1,6 @@
+[submodule "external/GroundingDINO"]
+	path = external/GroundingDINO
+	url = https://github.com/IDEA-Research/GroundingDINO.git
+[submodule "external/segment-anything"]
+	path = external/segment-anything
+	url = https://github.com/facebookresearch/segment-anything.git

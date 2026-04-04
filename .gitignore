@@ -1,0 +1,10 @@
+build/
+install/
+log/
+models/*.pth
+models/*.pt
+__pycache__/
+*.pyc
+gsam_ws_venv/
+output/
+.venv/
