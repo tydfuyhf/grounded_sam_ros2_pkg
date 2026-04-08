@@ -8,22 +8,30 @@ All logic lives in the modules below:
   label_mapper.apply_labels()         mask pixel → semantic category
   cloud_builder.build_pointcloud2()   CategoryPoints → PointCloud2 msg
 
-Subscriptions
+Subscriptions  (all configurable via ROS 2 parameters)
 -------------
-  /rgbd_camera/depth_image       sensor_msgs/Image       (32FC1, meters)
-  /rgbd_camera/camera_info       sensor_msgs/CameraInfo
-  /grounded_sam/mask_image       sensor_msgs/Image       (mono8, 1-based index)
-  /grounded_sam/detections_json  std_msgs/String         (JSON, no header)
+  <depth_topic>       sensor_msgs/Image       (32FC1, meters)
+  <camera_info_topic> sensor_msgs/CameraInfo
+  <mask_topic>        sensor_msgs/Image       (mono8, 1-based index)
+  <detections_topic>  std_msgs/String         (JSON, no header)
 
-Publications
+Publications  (all configurable via ROS 2 parameters)
 ------------
-  /labeled_points                sensor_msgs/PointCloud2 (XYZRGB + category field)
-  /projection_result             std_msgs/String         (JSON centroid summary)
+  <output_cloud_topic>   sensor_msgs/PointCloud2 (XYZRGB + category field)
+  <output_result_topic>  std_msgs/String         (JSON centroid summary)
 
 Parameters
 ----------
-  min_depth  float  0.05  Discard depth readings below this value (m)
-  max_depth  float  15.0  Discard depth readings above this value (m)
+  depth_topic          string  /rgbd_camera/depth_image
+  camera_info_topic    string  /rgbd_camera/camera_info
+  mask_topic           string  /grounded_sam/mask_image
+  detections_topic     string  /grounded_sam/detections_json
+  output_cloud_topic   string  /labeled_points
+  output_result_topic  string  /projection_result
+  output_frame_id      string  ''   Override PointCloud2 frame_id.
+                                    Empty string = use depth message header as-is.
+  min_depth            float   0.05 Discard depth readings below this value (m)
+  max_depth            float   15.0 Discard depth readings above this value (m)
 
 Design note — why no ApproximateTimeSynchronizer
 -------------------------------------------------
@@ -34,6 +42,9 @@ fires the moment a new mask_image arrives.  This is correct because:
   - depth changes slowly (static tabletop scene)
   - mask timestamp already matches the depth that was captured (rgb and
     depth share the same Gazebo sim-time stamp from the same sensor)
+
+When moving to Isaac Sim (real-time GPU inference) replace the cache pattern
+with message_filters.ApproximateTimeSynchronizer across depth + mask.
 """
 from __future__ import annotations
 
@@ -59,11 +70,29 @@ class MaskProjectorNode(Node):
         super().__init__('mask_projector_node')
 
         # ── parameters ───────────────────────────────────────────────────────
+        # Topic names — override in launch file to swap simulator adapters.
+        # Default values match the Gazebo bridge setup.
+        self.declare_parameter('depth_topic',         '/rgbd_camera/depth_image')
+        self.declare_parameter('camera_info_topic',   '/rgbd_camera/camera_info')
+        self.declare_parameter('mask_topic',          '/grounded_sam/mask_image')
+        self.declare_parameter('detections_topic',    '/grounded_sam/detections_json')
+        self.declare_parameter('output_cloud_topic',  '/labeled_points')
+        self.declare_parameter('output_result_topic', '/projection_result')
+        # Empty string = inherit frame_id from incoming depth message header
+        self.declare_parameter('output_frame_id',     '')
+        # Depth filter range
         self.declare_parameter('min_depth', 0.05)
         self.declare_parameter('max_depth', 15.0)
 
-        self._min_depth = self.get_parameter('min_depth').value
-        self._max_depth = self.get_parameter('max_depth').value
+        depth_topic         = self.get_parameter('depth_topic').value
+        camera_info_topic   = self.get_parameter('camera_info_topic').value
+        mask_topic          = self.get_parameter('mask_topic').value
+        detections_topic    = self.get_parameter('detections_topic').value
+        output_cloud_topic  = self.get_parameter('output_cloud_topic').value
+        output_result_topic = self.get_parameter('output_result_topic').value
+        self._output_frame_id = self.get_parameter('output_frame_id').value
+        self._min_depth       = self.get_parameter('min_depth').value
+        self._max_depth       = self.get_parameter('max_depth').value
 
         # ── cache — updated by individual subscribers ─────────────────────────
         self._bridge             = CvBridge()
@@ -73,25 +102,21 @@ class MaskProjectorNode(Node):
 
         # ── subscribers ───────────────────────────────────────────────────────
         # depth and camera_info: just cache the latest frame
-        self.create_subscription(Image,      '/rgbd_camera/depth_image',
-                                 self._depth_cb, 10)
-        self.create_subscription(CameraInfo, '/rgbd_camera/camera_info',
-                                 self._info_cb, 10)
+        self.create_subscription(Image,      depth_topic,      self._depth_cb, 10)
+        self.create_subscription(CameraInfo, camera_info_topic, self._info_cb, 10)
         # detections_json: cache (no header, published together with mask)
-        self.create_subscription(String,     '/grounded_sam/detections_json',
-                                 self._json_cb, 10)
+        self.create_subscription(String,     detections_topic, self._json_cb, 10)
         # mask_image: TRIGGER — runs projection when a new mask arrives
-        self.create_subscription(Image,      '/grounded_sam/mask_image',
-                                 self._mask_cb, 10)
+        self.create_subscription(Image,      mask_topic,       self._mask_cb, 10)
 
         # ── publishers ───────────────────────────────────────────────────────
-        self._pub_cloud  = self.create_publisher(PointCloud2, '/labeled_points',    10)
-        self._pub_result = self.create_publisher(String,      '/projection_result', 10)
+        self._pub_cloud  = self.create_publisher(PointCloud2, output_cloud_topic,  10)
+        self._pub_result = self.create_publisher(String,      output_result_topic, 10)
 
         self.get_logger().info(
             f'MaskProjectorNode ready — '
             f'depth=[{self._min_depth}, {self._max_depth}]m  '
-            f'trigger=mask_image'
+            f'trigger={mask_topic}'
         )
 
     # ── cache callbacks ───────────────────────────────────────────────────────
@@ -145,10 +170,16 @@ class MaskProjectorNode(Node):
         )
 
         # ── publish ───────────────────────────────────────────────────────────
-        self._pub_cloud.publish(
-            build_pointcloud2(self._latest_depth.header, category_points))
-        self._pub_result.publish(
-            String(data=_build_result_json(category_points)))
+        cloud_header = self._latest_depth.header
+        if self._output_frame_id:
+            # Allow overriding frame_id without changing depth source
+            # (useful when Isaac Sim uses a different TF frame name)
+            cloud_header = type(cloud_header)(
+                stamp=cloud_header.stamp,
+                frame_id=self._output_frame_id,
+            )
+        self._pub_cloud.publish(build_pointcloud2(cloud_header, category_points))
+        self._pub_result.publish(String(data=_build_result_json(category_points)))
 
 
 # ── helpers (module-level, easy to move/extend) ───────────────────────────────

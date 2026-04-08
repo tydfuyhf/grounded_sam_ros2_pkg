@@ -8,6 +8,18 @@ ROS 2 + Gazebo 환경에서 RGB-D 카메라 이미지를 **Grounded SAM** 으로
 
 ---
 
+## 실행 결과
+
+**RViz2 — Labeled PointCloud2**
+
+![RViz labeled points](docs/images/rviz_labeled_points.png)
+
+**rqt_graph — 노드 연결 구조**
+
+![rqt graph](docs/images/rqt_graph.png)
+
+---
+
 ## 전체 파이프라인
 
 ```
@@ -160,9 +172,17 @@ ros2 launch grounded_sam_pkg grounded_sam.launch.py \
 **터미널 3 — Mask Projection 노드**
 
 ```bash
-source /opt/ros/jazzy/setup.bash
-source install/setup.bash
-ros2 run mask_projection_pkg mask_projector_node
+source launch_env.bash
+ros2 launch mask_projection_pkg mask_projector.launch.py
+```
+
+Isaac Sim 등 다른 시뮬레이터 토픽으로 오버라이드:
+
+```bash
+ros2 launch mask_projection_pkg mask_projector.launch.py \
+  depth_topic:=/isaac/depth \
+  camera_info_topic:=/isaac/camera_info \
+  output_frame_id:=camera_frame
 ```
 
 ---
