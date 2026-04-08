@@ -34,10 +34,11 @@ from rclpy.qos import QoSDurabilityPolicy, QoSProfile
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
 
-LATCHED_QOS = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
+# LATCHED_QOS = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
+# ↑ TRANSIENT_LOCAL subscriber is incompatible with Gazebo bridge's VOLATILE publisher
 
 from .pipeline import GroundedSAMPipeline
-from .postprocess import format_detections, format_masks
+from .postprocess import format_detections, format_masks, build_label_map
 from .prompt_adapter import PromptAdapter
 from .visualizer import draw_bboxes, draw_masks, save_result
 
@@ -65,12 +66,12 @@ class GroundedSAMNode(Node):
         self.get_logger().info("Loading models...")
         self.pipeline = GroundedSAMPipeline(model_config)
 
-        # subscriber
+        # subscriber — use default VOLATILE QoS to match Gazebo bridge publisher
         self.subscription = self.create_subscription(
             Image,
             image_topic,
             self._image_callback,
-            qos_profile=LATCHED_QOS,
+            qos_profile=10,
         )
 
         # publishers
@@ -96,20 +97,22 @@ class GroundedSAMNode(Node):
         if result["masks"] is not None:
             mask_list = format_masks(result["masks"], result["mask_scores"])
             vis = draw_masks(vis, mask_list)
-            label_map = self._build_label_map(image_bgr.shape[:2], mask_list)
+            label_map = build_label_map(image_bgr.shape[:2], mask_list)
         else:
             mask_list = []
             label_map = np.zeros(image_bgr.shape[:2], dtype=np.uint8)
 
         # publish annotated image (BGR → bgr8)
-        self.pub_annotated.publish(
-            self.bridge.cv2_to_imgmsg(vis, encoding="bgr8")
-        )
+        annotated_msg = self.bridge.cv2_to_imgmsg(vis, encoding="bgr8")
+        annotated_msg.header = msg.header   # preserve source timestamp + frame_id
+        self.pub_annotated.publish(annotated_msg)
 
         # publish mask label map (8UC1, pixel = detection index 1-based)
-        self.pub_mask.publish(
-            self.bridge.cv2_to_imgmsg(label_map, encoding="mono8")
-        )
+        # header is copied from the source image so that ApproximateTimeSynchronizer
+        # in mask_projection_pkg can match mask ↔ depth by timestamp
+        mask_msg = self.bridge.cv2_to_imgmsg(label_map, encoding="mono8")
+        mask_msg.header = msg.header        # ← key: same stamp as depth/camera_info
+        self.pub_mask.publish(mask_msg)
 
         # publish detections JSON
         msg_json = String()
@@ -121,17 +124,6 @@ class GroundedSAMNode(Node):
         filename = f"result_{initials}.jpg"
         save_result(vis, OUTPUT_DIR / filename)
         self.get_logger().info(f"Saved → {OUTPUT_DIR / filename}")
-
-    @staticmethod
-    def _build_label_map(shape_hw, mask_list) -> np.ndarray:
-        """
-        Build a uint8 label map where pixel value = 1-based detection index.
-        Later detections overwrite earlier ones where masks overlap.
-        """
-        label_map = np.zeros(shape_hw, dtype=np.uint8)
-        for i, m in enumerate(mask_list, start=1):
-            label_map[m["mask"]] = i
-        return label_map
 
 
 def main(args=None):

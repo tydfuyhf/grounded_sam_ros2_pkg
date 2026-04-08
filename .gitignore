@@ -8,3 +8,7 @@ __pycache__/
 gsam_ws_venv/
 output/
 .venv/
+data/
+*.npy
+*.bak
+external/COLCON_IGNORE

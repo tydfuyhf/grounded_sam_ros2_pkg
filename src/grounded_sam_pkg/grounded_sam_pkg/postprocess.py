@@ -1,5 +1,6 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 
+import numpy as np
 import torch
 
 
@@ -47,3 +48,22 @@ def format_masks(masks: torch.Tensor, scores: torch.Tensor) -> List[Dict[str, An
             "score": float(scores[i, 0]) if scores is not None else None,
         })
     return results
+
+
+def build_label_map(shape_hw: Tuple[int, int], mask_list: List[Dict[str, Any]]) -> np.ndarray:
+    """
+    Build a uint8 label map from SAM masks.
+
+    pixel value = 1-based detection index  (0 = background)
+    Later detections overwrite earlier ones where masks overlap.
+
+    Args:
+        shape_hw  : (H, W) of the original image
+        mask_list : output of format_masks()
+    Returns:
+        label_map : np.ndarray uint8 (H, W)
+    """
+    label_map = np.zeros(shape_hw, dtype=np.uint8)
+    for i, m in enumerate(mask_list, start=1):
+        label_map[m["mask"]] = i
+    return label_map
