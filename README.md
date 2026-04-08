@@ -3,8 +3,8 @@
 ROS 2 + Gazebo 환경에서 RGB-D 카메라 이미지를 **Grounded SAM** 으로 세그멘테이션하고,  
 결과 마스크를 Depth 이미지와 결합해 **라벨링된 3D PointCloud2** 를 생성하는 파이프라인입니다.
 
-> 향후 Qwen VLM → Grounded SAM → Mask Projection → MoveIt2 순서의 완전한 파이프라인으로 확장 예정입니다.  
-> 현재는 Qwen 없이 Grounded SAM 출력을 직접 소비하는 테스트 구성입니다.
+> **최종 목표:** Grounded SAM → Qwen VLM → Mask Projection → MoveIt2  
+> **현재 상태 (테스트):** Qwen 미연동. Gazebo 씬에 물체가 각 1개씩이므로 GSAM 출력을 projection 노드가 직접 소비.
 
 ---
 
@@ -271,6 +271,7 @@ SAM 모델 크기 비교:
 
 ## 향후 계획
 
-- Qwen VLM 연동: 이미지 입력 → `{"target": ..., "workspace": ...}` JSON 출력 → projection 노드로 전달
+- Qwen VLM 연동: GSAM 감지 결과 → Qwen 추론 (어떤 물체가 target/workspace인지 결정) → projection 노드로 전달
 - MoveIt2 연동: `/labeled_points` 의 TARGET centroid 좌표를 goal pose 로 활용
+- Isaac Sim 어댑터: `mask_projector.launch.py` 의 토픽 파라미터만 변경하면 전환 가능
 - `/projection_result` 포맷을 `target_coordinate` 필드 기반 JSON 으로 확장
