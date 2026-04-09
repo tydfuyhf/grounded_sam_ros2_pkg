@@ -10,9 +10,13 @@ ROS 2 + Gazebo 환경에서 RGB-D 카메라 이미지를 **Grounded SAM** 으로
 
 ## 실행 결과
 
+**GSAM — 마스킹 및 라벨링 결과** (`prompt:="cup, table, object"`)
+
+![Annotated image](docs/images/annotated_cto.jpg)
+
 **RViz2 — Labeled PointCloud2**
 
-![RViz labeled points](docs/images/rviz_labeled_points.png)
+![RViz labeled points](docs/images/labled_pointcloud_cto.png)
 
 **rqt_graph — 노드 연결 구조**
 
