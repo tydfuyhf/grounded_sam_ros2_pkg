@@ -49,6 +49,7 @@ with message_filters.ApproximateTimeSynchronizer across depth + mask.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -57,6 +58,8 @@ from cv_bridge import CvBridge
 from rclpy.node import Node
 from sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from std_msgs.msg import String
+
+_OUTPUT_DIR = Path.home() / "gsam_ws" / "output"
 
 
 from .back_projection import depth_to_points
@@ -80,6 +83,8 @@ class MaskProjectorNode(Node):
         self.declare_parameter('output_result_topic', '/projection_result')
         # Empty string = inherit frame_id from incoming depth message header
         self.declare_parameter('output_frame_id',     '')
+        # Prompt initials for output filenames, e.g. "tc" for "table, cup"
+        self.declare_parameter('initials',            '')
         # Depth filter range
         self.declare_parameter('min_depth', 0.05)
         self.declare_parameter('max_depth', 15.0)
@@ -93,6 +98,7 @@ class MaskProjectorNode(Node):
         self._output_frame_id = self.get_parameter('output_frame_id').value
         self._min_depth       = self.get_parameter('min_depth').value
         self._max_depth       = self.get_parameter('max_depth').value
+        self._initials        = self.get_parameter('initials').value
 
         # ── cache — updated by individual subscribers ─────────────────────────
         self._bridge             = CvBridge()
@@ -181,8 +187,65 @@ class MaskProjectorNode(Node):
         self._pub_cloud.publish(build_pointcloud2(cloud_header, category_points))
         self._pub_result.publish(String(data=_build_result_json(category_points)))
 
+        # ── save pointclouds to disk ──────────────────────────────────────────
+        stamp  = self._latest_depth.header.stamp.sec
+        prefix = f"{self._initials}_" if self._initials else ""
+        orig_name    = f"cloud_original_{prefix}{stamp}.ply"
+        labeled_name = f"cloud_labeled_{prefix}{stamp}.ply"
+        _save_ply_xyz(_OUTPUT_DIR / orig_name, points)
+        _save_ply_labeled(_OUTPUT_DIR / labeled_name, category_points)
+        self.get_logger().info(f"Saved → {orig_name}  {labeled_name}")
+
 
 # ── helpers (module-level, easy to move/extend) ───────────────────────────────
+
+def _save_ply_xyz(path: Path, points: np.ndarray) -> None:
+    """Save (N, 3) float32 XYZ points as binary-little-endian PLY."""
+    N = len(points)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    header = (
+        "ply\nformat binary_little_endian 1.0\n"
+        f"element vertex {N}\n"
+        "property float x\nproperty float y\nproperty float z\n"
+        "end_header\n"
+    )
+    with open(path, 'wb') as f:
+        f.write(header.encode())
+        f.write(points.astype(np.float32).tobytes())
+
+
+def _save_ply_labeled(path: Path, category_points: List[CategoryPoints]) -> None:
+    """Save labeled points (XYZ + RGB + category) as binary-little-endian PLY."""
+    all_pts  = np.concatenate([cp.points     for cp in category_points], axis=0)
+    all_col  = np.concatenate([cp.colors     for cp in category_points], axis=0)
+    all_cats = np.concatenate([cp.categories for cp in category_points], axis=0)
+    N = len(all_pts)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    dt = np.dtype([
+        ('x', np.float32), ('y', np.float32), ('z', np.float32),
+        ('red', np.uint8), ('green', np.uint8), ('blue', np.uint8),
+        ('category', np.uint8),
+    ])
+    arr             = np.zeros(N, dtype=dt)
+    arr['x']        = all_pts[:, 0]
+    arr['y']        = all_pts[:, 1]
+    arr['z']        = all_pts[:, 2]
+    arr['red']      = all_col[:, 0]
+    arr['green']    = all_col[:, 1]
+    arr['blue']     = all_col[:, 2]
+    arr['category'] = all_cats
+    header = (
+        "ply\nformat binary_little_endian 1.0\n"
+        f"element vertex {N}\n"
+        "property float x\nproperty float y\nproperty float z\n"
+        "property uchar red\nproperty uchar green\nproperty uchar blue\n"
+        "property uchar category\n"
+        "end_header\n"
+    )
+    with open(path, 'wb') as f:
+        f.write(header.encode())
+        f.write(arr.tobytes())
+
 
 def _build_result_json(category_points: List[CategoryPoints]) -> str:
     """

@@ -173,17 +173,38 @@ ros2 launch grounded_sam_pkg grounded_sam.launch.py \
 
 ```bash
 source launch_env.bash
-ros2 launch mask_projection_pkg mask_projector.launch.py
+ros2 launch mask_projection_pkg mask_projector.launch.py \
+  initials:=tc
 ```
+
+`initials` 는 출력 파일명에 붙는 접두사입니다 (터미널 2의 `prompt` 첫 글자들과 맞추세요).  
+생략하면 `cloud_original_{stamp}.ply` 형식으로 저장됩니다.
 
 Isaac Sim 등 다른 시뮬레이터 토픽으로 오버라이드:
 
 ```bash
 ros2 launch mask_projection_pkg mask_projector.launch.py \
+  initials:=tc \
   depth_topic:=/isaac/depth \
   camera_info_topic:=/isaac/camera_info \
   output_frame_id:=camera_frame
 ```
+
+---
+
+## 출력 파일
+
+추론 실행 시 `~/gsam_ws/output/` 에 자동 저장됩니다.
+
+| 파일 | 형식 | 설명 |
+|---|---|---|
+| `result_{initials}.jpg` | JPEG | bbox + mask 오버레이 이미지 (매 프레임 덮어씀) |
+| `cloud_original_{initials}_{stamp}.ply` | Binary PLY | 원본 포인트클라우드 (XYZ) |
+| `cloud_labeled_{initials}_{stamp}.ply` | Binary PLY | 라벨링된 포인트클라우드 (XYZ + RGB + category) |
+
+- `{initials}` : `prompt` 각 단어의 첫 글자 (예: `"table, cup"` → `tc`)
+- `{stamp}` : depth 메시지 타임스탬프 (초 단위)
+- PLY 파일은 MeshLab, Open3D, CloudCompare 등으로 열 수 있습니다
 
 ---
 

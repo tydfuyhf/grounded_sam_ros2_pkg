@@ -74,6 +74,10 @@ def generate_launch_description():
             'max_depth', default_value='15.0',
             description='Maximum valid depth (m)',
         ),
+        DeclareLaunchArgument(
+            'initials', default_value='',
+            description='Prompt initials for output filenames, e.g. "tc" for "table, cup"',
+        ),
         # ── node ──────────────────────────────────────────────────────────────
         Node(
             package='mask_projection_pkg',
@@ -89,6 +93,7 @@ def generate_launch_description():
                 'output_frame_id':     LaunchConfiguration('output_frame_id'),
                 'min_depth':           LaunchConfiguration('min_depth'),
                 'max_depth':           LaunchConfiguration('max_depth'),
+                'initials':            LaunchConfiguration('initials'),
             }],
             output='screen',
         ),
