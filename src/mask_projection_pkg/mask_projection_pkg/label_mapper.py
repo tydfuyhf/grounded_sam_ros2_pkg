@@ -41,8 +41,8 @@ CATEGORY_OBSTACLE:  int = 3   # anything else detected → treat as obstacle
 # ── Per-category color (R, G, B) ─────────────────────────────────────────────
 CATEGORY_COLOR: Dict[int, tuple] = {
     CATEGORY_FREE:      ( 80,  80,  80),  # grey
-    CATEGORY_TARGET:    (255, 220,   0),  # yellow
-    CATEGORY_WORKSPACE: (  0, 200,  80),  # green
+    CATEGORY_TARGET:    (  0, 200,  80),  # green
+    CATEGORY_WORKSPACE: (255, 220,   0),  # yellow
     CATEGORY_OBSTACLE:  (220,  40,  40),  # red
 }
 

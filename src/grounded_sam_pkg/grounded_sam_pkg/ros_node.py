@@ -92,10 +92,24 @@ class GroundedSAMNode(Node):
         det_list = format_detections(result["detections"], result["phrases"])
         self.get_logger().info(f"Detected {len(det_list)} object(s)")
 
+        # sort detections by prompt keyword order so mask index matches prompt priority
+        prompt_keywords = [p.strip().lower() for p in self.prompt_raw.split(",")]
+
+        def _prompt_order(det):
+            label = det["label"].lower()
+            for i, kw in enumerate(prompt_keywords):
+                if kw in label or label in kw:
+                    return i
+            return len(prompt_keywords)
+
+        sorted_indices = sorted(range(len(det_list)), key=lambda i: _prompt_order(det_list[i]))
+        det_list = [det_list[i] for i in sorted_indices]
+
         # --- annotated image ---
         vis = draw_bboxes(image_bgr, det_list)
         if result["masks"] is not None:
             mask_list = format_masks(result["masks"], result["mask_scores"])
+            mask_list = [mask_list[i] for i in sorted_indices]
             vis = draw_masks(vis, mask_list)
             label_map = build_label_map(image_bgr.shape[:2], mask_list)
         else:

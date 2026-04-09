@@ -54,8 +54,8 @@ Gazebo (rgbd_projection)
       RViz2
     색상 기준:
       회색   → FREE      (배경 / 빈 공간)
-      노랑   → TARGET    (잡을 물체, mask index 1)
-      초록   → WORKSPACE (작업 테이블, mask index 2)
+      초록   → TARGET    (잡을 물체, mask index 1)
+      노랑   → WORKSPACE (작업 테이블, mask index 2)
       빨강   → OBSTACLE  (그 외 감지된 물체)
 ```
 
@@ -219,8 +219,8 @@ ros2 launch mask_projection_pkg mask_projector.launch.py \
 | 색상 | 카테고리 | 의미 |
 |---|---|---|
 | 회색 | FREE | 배경 / 빈 공간 |
-| 노랑 | TARGET | 잡을 물체 (prompt 첫 번째) |
-| 초록 | WORKSPACE | 작업 테이블 (prompt 두 번째) |
+| 초록 | TARGET | 잡을 물체 (prompt 첫 번째) |
+| 노랑 | WORKSPACE | 작업 테이블 (prompt 두 번째) |
 | 빨강 | OBSTACLE | 그 외 감지된 물체 |
 
 ---
