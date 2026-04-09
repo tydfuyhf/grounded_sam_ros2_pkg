@@ -21,7 +21,6 @@ setup(
     entry_points={
         'console_scripts': [
             'mask_projector_node = mask_projection_pkg.projector_node:main',
-            'static_projector    = mask_projection_pkg.static_projector:main',
         ],
     },
 )
