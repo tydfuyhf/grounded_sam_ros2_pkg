@@ -225,52 +225,125 @@ projection이 제대로 이루어졌다면 각 물체의 3D 형상이 해당 색
 
 ---
 
-## ⚠️ 카테고리 할당 방식: 환경 통합 시 반드시 수정 필요
+## ⚠️ Isaac Sim 통합 시 수정 체크리스트
 
-### 현재 방식 — prompt 순서 기반 (임시)
+아래 항목을 순서대로 처리하면 됩니다.  
+**launch 파라미터 오버라이드(1번)는 코드 수정 없음. 나머지는 파일 수정 필요.**
 
-현재 카테고리 할당은 **GSAM prompt의 단어 순서**에만 의존합니다.
+---
+
+### 1. 토픽 이름 오버라이드 — 코드 수정 없음, launch 명령만 변경
+
+Isaac Sim ROS 2 bridge가 발행하는 토픽 이름을 launch 파라미터로 넘기면 됩니다.
+
+```bash
+ros2 launch mask_projection_pkg multi_view_projector.launch.py \
+  top_depth_topic:=/isaac/top/depth_image \
+  top_camera_info_topic:=/isaac/top/camera_info \
+  ee_depth_topic:=/isaac/ee/depth_image \
+  ee_camera_info_topic:=/isaac/ee/camera_info
+```
+
+Isaac Sim bridge 토픽 이름은 동료가 USD stage 설정에서 확인.
+
+---
+
+### 2. 카메라 → 월드 좌표 변환 행렬 채우기
+
+**파일:** `mask_projection_pkg/multi_view_projector_node.py`  
+**위치:** 파일 상단, `# TODO (teammate)` 주석 아래
 
 ```python
-# label_mapper.py
-MASK_VALUE_TO_CATEGORY = {
-    1: CATEGORY_TARGET,     # prompt 첫 번째 단어가 감지된 마스크
-    2: CATEGORY_WORKSPACE,  # prompt 두 번째 단어가 감지된 마스크
-    # 3+ → OBSTACLE
+# 현재 (placeholder — 교체 필요)
+_R_TOP: np.ndarray = np.eye(3, dtype=np.float64)
+_t_TOP: np.ndarray = np.zeros(3, dtype=np.float64)
+_R_EE:  np.ndarray = np.eye(3, dtype=np.float64)
+_t_EE:  np.ndarray = np.zeros(3, dtype=np.float64)
+```
+
+**Isaac Sim에서 값 읽는 방법:**
+1. USD stage에서 카메라 prim 선택 (예: `/World/Camera_Top`)
+2. Property 패널 → **World Transform** 4×4 행렬 확인
+3. 좌상단 3×3 = `R` (카메라 축의 월드 기준 방향)
+4. 우상단 3×1 = `t` (카메라 원점의 월드 좌표, 단위 meters)
+5. EE 카메라는 로봇 **home pose** 상태에서 동일하게 측정
+
+**변환 규칙:** `p_world = R @ p_cam + t`
+
+**채운 뒤 예시:**
+```python
+_R_TOP = np.array([
+    [ 1.0,  0.0,  0.0],
+    [ 0.0,  0.0,  1.0],
+    [ 0.0, -1.0,  0.0],
+])
+_t_TOP = np.array([0.0, 0.0, 1.5])   # top camera가 월드 원점 위 1.5 m
+```
+
+---
+
+### 3. 카테고리 할당 방식 교체 — prompt 순서 → label 기반
+
+**왜 교체해야 하나:**  
+현재는 GSAM 감지 결과의 순서가 항상 prompt 순서와 일치한다고 가정합니다.  
+실제로는 GSAM이 prompt와 다른 순서로 감지할 수 있어 카테고리가 뒤바뀔 수 있습니다.
+
+**현재 코드 위치:** `mask_projection_pkg/label_mapper.py`
+
+```python
+# 현재 (임시 — 교체 필요)
+MASK_VALUE_TO_CATEGORY: Dict[int, int] = {
+    1: CATEGORY_TARGET,     # mask pixel 1 = prompt 첫 번째 = glass cup 이라고 가정
+    2: CATEGORY_WORKSPACE,  # mask pixel 2 = prompt 두 번째 = table 이라고 가정
+    # 3+ → OBSTACLE (fallback)
 }
 ```
 
-즉, `prompt:="glass cup, table, ..."` 로 실행했을 때 GSAM이 유리컵을 첫 번째로 감지했다고 가정하는 방식입니다. GSAM 감지 결과 순서가 항상 prompt 순서와 일치한다는 보장이 없어 틀릴 수 있습니다.
-
-### Isaac Sim 환경 통합 시 수정할 부분 — JSON 기반 매핑으로 교체
-
-환경 통합 시점에 `detections_json` 의 `label` 필드를 기준으로 카테고리를 직접 매핑하는 방식으로 교체해야 합니다.
-
-**수정 위치: `label_mapper.py` 또는 `multi_view_projector_node.py` 의 `_mask_cb`**
+**교체 방법 — `multi_view_projector_node.py` 의 `_mask_cb` 안에서 동적으로 생성:**
 
 ```python
-# 환경 통합 시 적용할 JSON 기반 매핑 예시
-# detections_json 예시:
+# detections_json 구조 예시 (GSAM 출력):
 # [
 #   {"label": "red ball",   "confidence": 0.91, "bbox_xyxy": [...]},
-#   {"label": "glass cup",  "confidence": 0.87, "bbox_xyxy": [...]},
+#   {"label": "glass cup",  "confidence": 0.87, "bbox_xyxy": [...]},  ← 순서가 바뀔 수 있음
 #   {"label": "table",      "confidence": 0.95, "bbox_xyxy": [...]},
-#   {"label": "blue cube",  "confidence": 0.82, "bbox_xyxy": [...]}
 # ]
-#
-# label → category 딕셔너리를 detections_json에서 동적으로 생성:
+
+# _mask_cb 에서 아래와 같이 label 기반 매핑을 동적으로 구성:
 LABEL_TO_CATEGORY = {
     "glass cup": CATEGORY_TARGET,
     "table":     CATEGORY_WORKSPACE,
-    # 그 외 모든 label → CATEGORY_OBSTACLE (apply_labels의 fallback 활용)
+    # 나머지는 apply_labels 내부 fallback → CATEGORY_OBSTACLE
 }
+
+# detections 리스트를 순회하며 mask pixel value(1-based index)와 label 매핑
+mask_value_to_category = {}
+for idx, det in enumerate(self._latest_detections):
+    mask_val = idx + 1   # mask pixel value는 1-based
+    label    = det["label"]
+    mask_value_to_category[mask_val] = LABEL_TO_CATEGORY.get(label, CATEGORY_OBSTACLE)
 ```
 
-`apply_labels()` 에 이 딕셔너리를 넘기도록 인터페이스를 확장하거나,  
-`_mask_cb` 안에서 `detections_json` 을 받아 `MASK_VALUE_TO_CATEGORY` 를 동적으로 재구성하면 됩니다.  
-`cloud_builder.py` 와 다운스트림 노드는 변경 불필요합니다.
+그런 다음 `apply_labels()` 호출 시 이 딕셔너리를 사용하도록 수정.  
+`cloud_builder.py` 와 다운스트림 노드는 변경 불필요.
 
-> 이 작업은 Isaac Sim 환경 통합 시점에 진행합니다. 현재는 prompt 순서 기반으로 먼저 동작 검증을 합니다.
+---
+
+### 4. (선택) GPU 추론 시 타임스탬프 동기화 방식 교체
+
+Isaac Sim + GPU 환경에서 GSAM 추론이 실시간으로 빨라지면 캐시 방식 대신  
+`ApproximateTimeSynchronizer` 로 교체하는 것이 더 정확합니다.
+
+**현재 코드 위치:** `multi_view_projector_node.py` → `_mask_cb` 진입부  
+**현재 방식:** depth/camera_info를 최신값으로 캐시, mask 수신 시 즉시 실행  
+**교체 방법:** `message_filters.ApproximateTimeSynchronizer` 로 ee_depth + mask 동기화
+
+> CPU 환경(추론 30~40초)에서는 캐시 방식이 맞습니다. GPU 환경으로 전환 후 판단하세요.
+
+---
+
+> **현재는 1번(토픽 오버라이드) + 2번(R/t 채우기) 만으로 동작 검증을 먼저 합니다.**  
+> 3번(label 매핑 교체)은 카테고리가 뒤바뀌는 현상이 확인되면 그때 수정합니다.
 
 ---
 

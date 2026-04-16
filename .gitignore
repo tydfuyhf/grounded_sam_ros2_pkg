@@ -1,3 +1,7 @@
+# Gazebo demo — excluded from capstone integration branch
+src/rgbd_projection/
+docs/
+
 build/
 install/
 log/
