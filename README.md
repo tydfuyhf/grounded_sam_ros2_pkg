@@ -245,16 +245,29 @@ ros2 launch mask_projection_pkg mask_projector.launch.py \
 
 ---
 
-## 모델 설정 변경 (`config/model_paths.yaml`)
+## 모델 경로 및 설정 (`src/grounded_sam_pkg/config/model_paths.yaml`)
+
+clone 후 **본인 경로에 맞게 수정 필수**입니다.  
+절대경로가 하드코딩되어 있으므로 그대로 실행하면 `FileNotFoundError` 가 발생합니다.
 
 ```yaml
 grounding_dino:
-  device: "cpu"   # GPU 있으면 "cuda" 로 변경
+  config_file: "/home/{사용자명}/{워크스페이스}/external/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"
+  checkpoint:  "/home/{사용자명}/{워크스페이스}/models/groundingdino_swint_ogc.pth"
+  box_threshold: 0.35
+  text_threshold: 0.25
+  device: "cpu"   # GPU 있으면 "cuda"
 
 sam:
-  model_type: "vit_h"   # vit_h | vit_l | vit_b
-  device: "cpu"         # GPU 있으면 "cuda" 로 변경
+  model_type: "vit_h"
+  checkpoint: "/home/{사용자명}/{워크스페이스}/models/sam_vit_h_4b8939.pth"
+  device: "cpu"   # GPU 있으면 "cuda"
 ```
+
+`{사용자명}` 과 `{워크스페이스}` 를 본인 환경으로 교체하세요.  
+예: `/home/parksanghyun/gsam_ws/` → 본인 경로로 변경.
+
+모델 파일(`*.pth`)은 `models/` 에 직접 다운로드해야 합니다 (`.gitignore` 로 추적 제외됨).
 
 SAM 모델 크기 비교:
 
