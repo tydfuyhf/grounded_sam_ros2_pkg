@@ -120,7 +120,42 @@ source install/setup.bash
 
 ---
 
-## Git 규칙
+## Git 레포 구조 — 중요
+
+작업 공간과 Git 레포가 분리되어 있습니다. 혼동하지 마세요.
+
+| 역할 | 경로 | 리모트 |
+|---|---|---|
+| 개인 작업 공간 | `/home/parksanghyun/gsam_ws` | `https://github.com/tydfuyhf/grounded_sam_ros2_pkg` |
+| 팀 레포 (클론) | `/home/parksanghyun/tmp/robot_capstone` (또는 별도 클론 위치) | `https://github.com/ChanwonJung/robot_capstone` |
+
+### 작업 흐름
+
+- **gsam_ws** 에서 개발 → 개인 레포(`origin`)에 push
+- 팀 레포에 반영할 때는 **robot_capstone을 별도로 클론**해서 패키지를 복사 추가 후 PR
+- gsam_ws에서 직접 팀 레포로 push하지 않음 (히스토리가 달라 conflict 위험)
+
+### 팀 레포에 패키지 추가하는 절차
+
+```bash
+# 1. 팀 레포 클론 (처음 한 번만)
+git clone https://github.com/ChanwonJung/robot_capstone.git ~/tmp/robot_capstone
+cd ~/tmp/robot_capstone
+
+# 2. main 기반 새 브랜치 생성
+git checkout -b sanghyun_gsam
+
+# 3. gsam_ws에서 패키지 복사
+cp -r /home/parksanghyun/gsam_ws/src/grounded_sam_pkg  src/
+cp -r /home/parksanghyun/gsam_ws/src/mask_projection_pkg  src/
+
+# 4. 커밋 후 push
+git add src/grounded_sam_pkg src/mask_projection_pkg
+git commit -m "Add grounded_sam_pkg and mask_projection_pkg"
+git push origin sanghyun_gsam
+```
+
+### Git 규칙
 
 - 커밋 메시지에 `Co-Authored-By: Claude` 남기지 않음
-- 연동 전 브랜치: `sanghyun_4_15` → `https://github.com/ChanwonJung/robot_capstone.git`
+- gsam_ws 내 `capstone` 리모트는 이전 작업 잔재 — 팀 레포 작업은 별도 클론에서 진행
