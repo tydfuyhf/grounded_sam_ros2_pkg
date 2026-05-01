@@ -1,11 +1,11 @@
 grounding_dino:
-  config_file: "/home/parksanghyun/gsam_ws/external/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"
-  checkpoint: "/home/parksanghyun/gsam_ws/models/groundingdino_swint_ogc.pth"
+  config_file: "${GSAM_WS}/external/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"
+  checkpoint: "${GSAM_WS}/models/groundingdino_swint_ogc.pth"
   box_threshold: 0.35
   text_threshold: 0.25
   device: "cpu"
 
 sam:
-  model_type: "vit_h"
-  checkpoint: "/home/parksanghyun/gsam_ws/models/sam_vit_h_4b8939.pth"
+  model_type: "vit_b"
+  checkpoint: "${GSAM_WS}/models/sam_vit_b_01ec64.pth"
   device: "cpu"
