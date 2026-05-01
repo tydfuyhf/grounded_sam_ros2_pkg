@@ -24,6 +24,7 @@ Parameters:
 """
 
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -42,7 +43,7 @@ from .postprocess import format_detections, format_masks, build_label_map
 from .prompt_adapter import PromptAdapter
 from .visualizer import draw_bboxes, draw_masks, save_result
 
-OUTPUT_DIR = Path.home() / "gsam_ws" / "output"
+OUTPUT_DIR = Path(os.environ.get("GSAM_WS", str(Path.home() / "gsam_ws"))) / "output"
 
 
 class GroundedSAMNode(Node):
