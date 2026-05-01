@@ -4,7 +4,7 @@ ROS 2 + Gazebo 환경에서 RGB-D 카메라 이미지를 **Grounded SAM** 으로
 결과 마스크를 Depth 이미지와 결합해 **라벨링된 3D PointCloud2** 를 생성하는 파이프라인입니다.
 
 > **최종 목표:** Grounded SAM → Qwen VLM → Mask Projection → MoveIt2  
-> **현재 상태 (테스트):** Qwen 미연동. Gazebo 씬에 물체가 각 1개씩이므로 GSAM 출력을 projection 노드가 직접 소비.
+> **현재 상태:** Qwen 미연동. `qwen_stub_node` 가 label 기반으로 category를 할당하는 중간 노드 역할.
 
 ---
 
@@ -38,18 +38,28 @@ Gazebo (rgbd_projection)
   /rgbd_camera/camera_info  (K matrix)
         │
         ▼
-  grounded_sam_pkg
+  grounded_sam_node
     Grounding DINO → bounding box
-    SAM → segmentation mask
+    SAM (ViT-B) → segmentation mask
         │
         ├─▶ /grounded_sam/mask_image       (mono8, pixel = 1-based object index)
-        ├─▶ /grounded_sam/detections_json  (label, confidence, bbox)
+        ├─▶ /grounded_sam/detections_json  (idx, label, confidence, bbox_xyxy)
         └─▶ /grounded_sam/annotated_image  (시각화용)
         │
         ▼
-  mask_projection_pkg
+  qwen_stub_node  ← (실제 Qwen VLM 연동 전 임시 노드)
+    label 텍스트 기반으로 category 필드 추가
+    cup → TARGET / table → WORKSPACE / 나머지 → OBSTACLE
+        │
+        ├─▶ /qwen/mask_image          (pass-through)
+        └─▶ /qwen/labeled_detections  (category 필드 추가된 JSON)
+        │
+        ▼
+  mask_projector_node
     depth + K → back-projection → 3D points
-    mask pixel → semantic category
+    category 필드 → 색상 할당
+    /rgbd_camera/depth_image  ──────────────────┐
+    /rgbd_camera/camera_info  ──────────────────┘ (카메라 직접)
         │
         ├─▶ /labeled_points      (PointCloud2, XYZRGB + category field)
         └─▶ /projection_result   (JSON: label, centroid, point_count)
@@ -58,8 +68,8 @@ Gazebo (rgbd_projection)
       RViz2
     색상 기준:
       회색   → FREE      (배경 / 빈 공간)
-      초록   → TARGET    (잡을 물체, mask index 1)
-      노랑   → WORKSPACE (작업 테이블, mask index 2)
+      초록   → TARGET    (잡을 물체)
+      노랑   → WORKSPACE (작업 테이블)
       빨강   → OBSTACLE  (그 외 감지된 물체)
 ```
 
@@ -69,25 +79,29 @@ Gazebo (rgbd_projection)
 
 | 패키지 | 역할 |
 |---|---|
-| `grounded_sam_pkg` | Grounding DINO + SAM 추론 ROS 2 노드 |
+| `grounded_sam_pkg` | Grounding DINO + SAM 추론 노드, Qwen stub 노드 |
 | `rgbd_projection` | Gazebo 시뮬레이션 + bridge + RViz 설정 |
 | `mask_projection_pkg` | 2D 마스크 → 3D PointCloud2 변환 노드 |
 
 ```
 grounded_sam_ros2_pkg/
 ├── src/
-│   ├── grounded_sam_pkg/       # GSAM 추론 노드
-│   ├── rgbd_projection/        # Gazebo 시뮬 + RViz
-│   └── mask_projection_pkg/    # Projection 노드
-│       ├── back_projection.py  # depth → 3D (수학 로직만)
-│       ├── label_mapper.py     # mask pixel → 카테고리/색상
-│       ├── cloud_builder.py    # PointCloud2 메시지 패킹
-│       └── projector_node.py   # ROS 2 노드 (wiring only)
-├── external/                   # submodule: GroundingDINO, SAM
-├── models/                     # 모델 가중치 (gitignore)
-├── config/
-│   └── model_paths.yaml
-├── launch_env.bash             # venv + ROS + PYTHONPATH 통합 설정
+│   ├── grounded_sam_pkg/
+│   │   ├── ros_node.py          # GSAM 추론 노드
+│   │   ├── qwen_stub_node.py    # Qwen 임시 stub 노드
+│   │   ├── postprocess.py       # 탐지 결과 포맷 변환
+│   │   └── pipeline.py          # GroundingDINO + SAM 추론
+│   ├── rgbd_projection/         # Gazebo 시뮬 + RViz
+│   └── mask_projection_pkg/
+│       ├── back_projection.py   # depth → 3D (수학 로직만)
+│       ├── label_mapper.py      # mask pixel + category → 색상
+│       ├── cloud_builder.py     # PointCloud2 메시지 패킹
+│       └── projector_node.py    # ROS 2 노드 (wiring only)
+├── external/                    # submodule: GroundingDINO, SAM
+├── models/                      # 모델 가중치 (gitignore)
+├── docs/
+│   └── pipeline_interface.md    # 파이프라인 인터페이스 설계 문서
+├── launch_env.bash              # venv + ROS + PYTHONPATH 통합 설정
 └── README.md
 ```
 
@@ -134,34 +148,32 @@ pip install supervision opencv-python-headless pyyaml
 mkdir -p models
 wget -q https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alpha/groundingdino_swint_ogc.pth \
      -O models/groundingdino_swint_ogc.pth
-wget -q https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth \
-     -O models/sam_vit_h_4b8939.pth
+wget -q https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth \
+     -O models/sam_vit_b_01ec64.pth
 ```
 
 | 모델 | 파일명 | 크기 |
 |---|---|---|
 | GroundingDINO SwinT | `groundingdino_swint_ogc.pth` | ~662 MB |
-| SAM ViT-H | `sam_vit_h_4b8939.pth` | ~2.4 GB |
+| SAM ViT-B | `sam_vit_b_01ec64.pth` | ~375 MB |
 
 ### 4. ROS 2 빌드
 
 ```bash
 source launch_env.bash
 colcon build
-source install/setup.bash
 ```
 
 ---
 
 ## 실행
 
-> 터미널마다 환경 설정이 필요합니다.
+> 터미널마다 `source launch_env.bash` 가 필요합니다.
 
 **터미널 1 — Gazebo 시뮬레이션 + RViz**
 
 ```bash
-source /opt/ros/jazzy/setup.bash
-source install/setup.bash
+source /opt/ros/jazzy/setup.bash && source install/setup.bash
 ros2 launch rgbd_projection rgbd_sim.launch.py
 ```
 
@@ -170,25 +182,31 @@ ros2 launch rgbd_projection rgbd_sim.launch.py
 ```bash
 source launch_env.bash
 ros2 launch grounded_sam_pkg grounded_sam.launch.py \
-  prompt:="cup, table"
+  prompt:="cup, table, object"
 ```
 
-**터미널 3 — Mask Projection 노드**
+**터미널 3 — Qwen stub 노드**
+
+```bash
+source launch_env.bash
+ros2 run grounded_sam_pkg qwen_stub_node
+```
+
+**터미널 4 — Mask Projection 노드**
 
 ```bash
 source launch_env.bash
 ros2 launch mask_projection_pkg mask_projector.launch.py \
-  initials:=tc
+  initials:=cto
 ```
 
-`initials` 는 출력 파일명에 붙는 접두사입니다 (터미널 2의 `prompt` 첫 글자들과 맞추세요).  
-생략하면 `cloud_original_{stamp}.ply` 형식으로 저장됩니다.
+`initials` 는 출력 파일명에 붙는 접두사입니다. 생략하면 `cloud_original_{stamp}.ply` 형식으로 저장됩니다.
 
 Isaac Sim 등 다른 시뮬레이터 토픽으로 오버라이드:
 
 ```bash
 ros2 launch mask_projection_pkg mask_projector.launch.py \
-  initials:=tc \
+  initials:=cto \
   depth_topic:=/isaac/depth \
   camera_info_topic:=/isaac/camera_info \
   output_frame_id:=camera_frame
@@ -206,7 +224,7 @@ ros2 launch mask_projection_pkg mask_projector.launch.py \
 | `cloud_original_{initials}_{stamp}.ply` | Binary PLY | 원본 포인트클라우드 (XYZ) |
 | `cloud_labeled_{initials}_{stamp}.ply` | Binary PLY | 라벨링된 포인트클라우드 (XYZ + RGB + category) |
 
-- `{initials}` : `prompt` 각 단어의 첫 글자 (예: `"table, cup"` → `tc`)
+- `{initials}` : `prompt` 각 단어의 첫 글자 (예: `"cup, table, object"` → `cto`)
 - `{stamp}` : depth 메시지 타임스탬프 (초 단위)
 - PLY 파일은 MeshLab, Open3D, CloudCompare 등으로 열 수 있습니다
 
@@ -223,49 +241,47 @@ ros2 launch mask_projection_pkg mask_projector.launch.py \
 | 색상 | 카테고리 | 의미 |
 |---|---|---|
 | 회색 | FREE | 배경 / 빈 공간 |
-| 초록 | TARGET | 잡을 물체 (prompt 첫 번째) |
-| 노랑 | WORKSPACE | 작업 테이블 (prompt 두 번째) |
+| 초록 | TARGET | 잡을 물체 |
+| 노랑 | WORKSPACE | 작업 테이블 |
 | 빨강 | OBSTACLE | 그 외 감지된 물체 |
 
 ---
 
 ## 발행 토픽 목록
 
-| 토픽 | 타입 | 설명 |
-|---|---|---|
-| `/rgbd_camera/image` | `sensor_msgs/Image` | RGB 이미지 |
-| `/rgbd_camera/depth_image` | `sensor_msgs/Image` | Depth (float32, m) |
-| `/rgbd_camera/camera_info` | `sensor_msgs/CameraInfo` | 카메라 내부 파라미터 |
-| `/rgbd_camera/points` | `sensor_msgs/PointCloud2` | Gazebo 원본 포인트클라우드 |
-| `/grounded_sam/mask_image` | `sensor_msgs/Image` | 세그멘테이션 마스크 (mono8) |
-| `/grounded_sam/detections_json` | `std_msgs/String` | 탐지 결과 JSON |
-| `/grounded_sam/annotated_image` | `sensor_msgs/Image` | 시각화용 오버레이 이미지 |
-| `/labeled_points` | `sensor_msgs/PointCloud2` | 라벨링된 포인트클라우드 |
-| `/projection_result` | `std_msgs/String` | 카테고리별 centroid JSON |
+| 토픽 | 타입 | 발행 노드 | 설명 |
+|---|---|---|---|
+| `/rgbd_camera/image` | `sensor_msgs/Image` | Gazebo | RGB 이미지 |
+| `/rgbd_camera/depth_image` | `sensor_msgs/Image` | Gazebo | Depth (float32, m) |
+| `/rgbd_camera/camera_info` | `sensor_msgs/CameraInfo` | Gazebo | 카메라 내부 파라미터 |
+| `/rgbd_camera/points` | `sensor_msgs/PointCloud2` | Gazebo | Gazebo 원본 포인트클라우드 |
+| `/grounded_sam/mask_image` | `sensor_msgs/Image` | grounded_sam_node | 세그멘테이션 마스크 (mono8) |
+| `/grounded_sam/detections_json` | `std_msgs/String` | grounded_sam_node | 탐지 결과 JSON (idx, label, confidence, bbox_xyxy) |
+| `/grounded_sam/annotated_image` | `sensor_msgs/Image` | grounded_sam_node | 시각화용 오버레이 이미지 |
+| `/qwen/mask_image` | `sensor_msgs/Image` | qwen_stub_node | 마스크 pass-through |
+| `/qwen/labeled_detections` | `std_msgs/String` | qwen_stub_node | category 필드 추가된 탐지 결과 JSON |
+| `/labeled_points` | `sensor_msgs/PointCloud2` | mask_projector_node | 라벨링된 포인트클라우드 |
+| `/projection_result` | `std_msgs/String` | mask_projector_node | 카테고리별 centroid JSON |
 
 ---
 
 ## 모델 경로 및 설정 (`src/grounded_sam_pkg/config/model_paths.yaml`)
 
-clone 후 **본인 경로에 맞게 수정 필수**입니다.  
-절대경로가 하드코딩되어 있으므로 그대로 실행하면 `FileNotFoundError` 가 발생합니다.
+`launch_env.bash` 가 `$GSAM_WS` 환경변수를 자동으로 설정하므로 경로 수정 없이 사용할 수 있습니다.
 
 ```yaml
 grounding_dino:
-  config_file: "/home/{사용자명}/{워크스페이스}/external/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"
-  checkpoint:  "/home/{사용자명}/{워크스페이스}/models/groundingdino_swint_ogc.pth"
+  config_file: "${GSAM_WS}/external/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"
+  checkpoint:  "${GSAM_WS}/models/groundingdino_swint_ogc.pth"
   box_threshold: 0.35
   text_threshold: 0.25
   device: "cpu"   # GPU 있으면 "cuda"
 
 sam:
-  model_type: "vit_h"
-  checkpoint: "/home/{사용자명}/{워크스페이스}/models/sam_vit_h_4b8939.pth"
+  model_type: "vit_b"
+  checkpoint: "${GSAM_WS}/models/sam_vit_b_01ec64.pth"
   device: "cpu"   # GPU 있으면 "cuda"
 ```
-
-`{사용자명}` 과 `{워크스페이스}` 를 본인 환경으로 교체하세요.  
-예: `/home/parksanghyun/gsam_ws/` → 본인 경로로 변경.
 
 모델 파일(`*.pth`)은 `models/` 에 직접 다운로드해야 합니다 (`.gitignore` 로 추적 제외됨).
 
@@ -283,13 +299,13 @@ SAM 모델 크기 비교:
 
 **CPU 환경 (노트북 등)**
 - `config/model_paths.yaml` 의 `device: "cpu"` 설정으로 GPU 없이 동작합니다.
-- SAM ViT-H + Grounding DINO SwinT 를 CPU 추론 시 **프레임당 30~40초** 소요됩니다.
-- 추론 속도가 중요하면 `vit_b` 모델로 변경하거나 GPU 환경에서 실행하세요.
+- SAM ViT-B + Grounding DINO SwinT 를 CPU 추론 시 **프레임당 30~40초** 소요됩니다.
 
 **타임스탬프 동기화**
 - `mask_projector_node` 는 `ApproximateTimeSynchronizer` 를 사용하지 않습니다.
 - CPU 추론 지연(30~40초) 때문에 depth 큐와 timestamp 매칭이 불가능하기 때문입니다.
-- 대신 depth/camera_info 최신값을 캐시하고, **mask_image 수신 시 즉시 projection** 을 트리거합니다.
+- 대신 depth/camera_info/detections 최신값을 캐시하고, **mask_image 수신 시 즉시 projection** 을 트리거합니다.
+- qwen_stub_node 도 동일한 패턴 (detections 캐시 → mask 수신 시 트리거) 을 사용합니다.
 
 **QoS 설정**
 - Gazebo bridge 는 VOLATILE QoS 로 발행합니다.
@@ -298,8 +314,8 @@ SAM 모델 크기 비교:
 
 **`launch_env.bash` 필수**
 - venv site-packages, GroundingDINO, SAM 소스 경로를 `PYTHONPATH` 에 추가합니다.
+- `$GSAM_WS` 환경변수를 설정하고 `model_paths.yaml` 경로를 자동으로 치환합니다.
 - Grounded SAM 노드 실행 전 반드시 `source launch_env.bash` 를 먼저 실행하세요.
-- 이 없이 실행하면 `ModuleNotFoundError: No module named 'torch'` 또는 `groundingdino` 에러가 발생합니다.
 
 **모델 가중치**
 - `models/*.pth` 는 `.gitignore` 로 추적되지 않습니다. 직접 다운로드하세요.
@@ -309,7 +325,6 @@ SAM 모델 크기 비교:
 
 ## 향후 계획
 
-- Qwen VLM 연동: GSAM 감지 결과 → Qwen 추론 (어떤 물체가 target/workspace인지 결정) → projection 노드로 전달
-- MoveIt2 연동: `/labeled_points` 의 TARGET centroid 좌표를 goal pose 로 활용
-- Isaac Sim 어댑터: `mask_projector.launch.py` 의 토픽 파라미터만 변경하면 전환 가능
-- `/projection_result` 포맷을 `target_coordinate` 필드 기반 JSON 으로 확장
+- **Qwen VLM 연동**: `qwen_stub_node` 를 실제 Qwen API 호출로 교체. instruction 의미 해석으로 TARGET/WORKSPACE 결정
+- **MoveIt2 연동**: `/projection_result` 의 TARGET centroid → goal pose, OBSTACLE → 충돌 맵
+- **Isaac Sim 어댑터**: launch 토픽 파라미터 오버라이드만으로 전환 가능
