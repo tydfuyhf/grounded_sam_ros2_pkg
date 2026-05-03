@@ -328,3 +328,13 @@ SAM 모델 크기 비교:
 - **Qwen VLM 연동**: `qwen_stub_node` 를 실제 Qwen API 호출로 교체. instruction 의미 해석으로 TARGET/WORKSPACE 결정
 - **MoveIt2 연동**: `/projection_result` 의 TARGET centroid → goal pose, OBSTACLE → 충돌 맵
 - **Isaac Sim 어댑터**: launch 토픽 파라미터 오버라이드만으로 전환 가능
+
+## Acknowledgements
+
+This project is a ROS 2 integration/wrapper project built on top of open-source vision models including Grounding DINO, Segment Anything, and Grounded-Segment-Anything.
+
+- Grounding DINO: https://github.com/IDEA-Research/GroundingDINO
+- Segment Anything: https://github.com/facebookresearch/segment-anything
+- Grounded-Segment-Anything: https://github.com/IDEA-Research/Grounded-Segment-Anything
+
+Pretrained model weights are not included in this repository and should be downloaded from the official sources.
