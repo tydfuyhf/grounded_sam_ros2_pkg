@@ -283,7 +283,7 @@ sam:
   device: "cpu"   # GPU 있으면 "cuda"
 ```
 
-모델 파일(`*.pth`)은 `models/` 에 직접 다운로드해야 합니다 (`.gitignore` 로 추적 제외됨).
+모델 파일(`*.pth`)은 `models/` 에 직접 다운로드해야 합니다.
 
 SAM 모델 크기 비교:
 
