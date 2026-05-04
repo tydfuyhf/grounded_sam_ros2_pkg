@@ -4,7 +4,8 @@ ROS 2 + Gazebo 환경에서 RGB-D 카메라 이미지를 **Grounded SAM** 으로
 결과 마스크를 Depth 이미지와 결합해 **라벨링된 3D PointCloud2** 를 생성하는 파이프라인입니다.
 
 > **최종 목표:** Grounded SAM → Qwen VLM → Mask Projection → MoveIt2  
-> **현재 상태:** Qwen 미연동. `qwen_stub_node` 가 label 기반으로 category를 할당하는 중간 노드 역할.
+> **현재 상태:** `qwen_stub_node` 가 label 기반으로 category를 할당하는 중간 노드 역할.  
+> Qwen 실제 연동 및 MoveIt2 연동은 팀원 담당.
 
 ---
 
@@ -29,48 +30,40 @@ ROS 2 + Gazebo 환경에서 RGB-D 카메라 이미지를 **Grounded SAM** 으로
 ```
 Gazebo (rgbd_projection)
   tabletop scene: box + cone + wood_table + teamug
-  RGBD 카메라 (위에서 테이블 내려다봄, pitch ~40°)
-        │
+  ┌─ ee_camera  (front-view, z=2.5m, pitch=26°)  ← GSAM 입력
+  └─ top_camera (overhead,   z=2.5m, pitch=90°)  ← depth-only
         │ ros_gz_bridge
         ▼
-  /rgbd_camera/image        (RGB)
-  /rgbd_camera/depth_image  (float32, meters)
-  /rgbd_camera/camera_info  (K matrix)
+  /ee_camera/image        /ee_camera/depth_image  /ee_camera/camera_info
+  /top_camera/depth_image /top_camera/camera_info
         │
         ▼
-  grounded_sam_node
-    Grounding DINO → bounding box
-    SAM (ViT-B) → segmentation mask
-        │
-        ├─▶ /grounded_sam/mask_image       (mono8, pixel = 1-based object index)
+  grounded_sam_node  ← /ee_camera/image 만 입력
+    GroundingDINO → bounding box
+    SAM (ViT-B)   → segmentation mask
+        ├─▶ /grounded_sam/mask_image       (mono8, pixel = 1-based idx)
         ├─▶ /grounded_sam/detections_json  (idx, label, confidence, bbox_xyxy)
-        └─▶ /grounded_sam/annotated_image  (시각화용)
+        └─▶ /grounded_sam/annotated_image
         │
         ▼
-  qwen_stub_node  ← (실제 Qwen VLM 연동 전 임시 노드)
-    label 텍스트 기반으로 category 필드 추가
+  qwen_stub_node  (실제 Qwen VLM 대체 임시 노드)
     cup → TARGET / table → WORKSPACE / 나머지 → OBSTACLE
-        │
-        ├─▶ /qwen/mask_image          (pass-through)
-        └─▶ /qwen/labeled_detections  (category 필드 추가된 JSON)
+        ├─▶ /qwen/mask_image
+        └─▶ /qwen/labeled_detections
         │
         ▼
-  mask_projector_node
-    depth + K → back-projection → 3D points
-    category 필드 → 색상 할당
-    /rgbd_camera/depth_image  ──────────────────┐
-    /rgbd_camera/camera_info  ──────────────────┘ (카메라 직접)
-        │
-        ├─▶ /labeled_points      (PointCloud2, XYZRGB + category field)
-        └─▶ /projection_result   (JSON: label, centroid, point_count)
+  multi_view_projector_node
+    EE depth  + GSAM 마스크  →  TARGET / WORKSPACE / OBSTACLE / FREE
+      └─ TARGET 3D bbox 계산 → Top 뷰에서 TARGET 영역 제거
+    Top depth               →  UNKNOWN (씬 기하, 보라)
+    두 뷰 world frame 변환 후 병합
+    extrinsics: src/mask_projection_pkg/config/camera_extrinsics.yaml
+        ├─▶ /world_map        (PointCloud2, frame_id="world")
+        └─▶ /world_map_result (JSON: centroid + bbox_3d_world per category)
         │
         ▼
       RViz2
-    색상 기준:
-      회색   → FREE      (배경 / 빈 공간)
-      초록   → TARGET    (잡을 물체)
-      노랑   → WORKSPACE (작업 테이블)
-      빨강   → OBSTACLE  (그 외 감지된 물체)
+    회색→FREE  초록→TARGET  노랑→WORKSPACE  빨강→OBSTACLE  보라→UNKNOWN
 ```
 
 ---
@@ -80,7 +73,7 @@ Gazebo (rgbd_projection)
 | 패키지 | 역할 |
 |---|---|
 | `grounded_sam_pkg` | Grounding DINO + SAM 추론 노드, Qwen stub 노드 |
-| `rgbd_projection` | Gazebo 시뮬레이션 + bridge + RViz 설정 |
+| `rgbd_projection` | Gazebo 시뮬레이션 + bridge + RViz 설정 (데모용) |
 | `mask_projection_pkg` | 2D 마스크 → 3D PointCloud2 변환 노드 |
 
 ```
@@ -93,10 +86,10 @@ grounded_sam_ros2_pkg/
 │   │   └── pipeline.py          # GroundingDINO + SAM 추론
 │   ├── rgbd_projection/         # Gazebo 시뮬 + RViz
 │   └── mask_projection_pkg/
-│       ├── back_projection.py   # depth → 3D (수학 로직만)
+│       ├── back_projection.py   # depth → 3D (수학 로직)
 │       ├── label_mapper.py      # mask pixel + category → 색상
 │       ├── cloud_builder.py     # PointCloud2 메시지 패킹
-│       └── projector_node.py    # ROS 2 노드 (wiring only)
+│       └── multi_view_projector_node.py  # ROS 2 노드
 ├── external/                    # submodule: GroundingDINO, SAM
 ├── models/                      # 모델 가중치 (gitignore)
 ├── docs/
@@ -166,50 +159,54 @@ colcon build
 
 ---
 
-## 실행
+## 실행 (Gazebo 데모, prompt="cup, table, object")
 
-> 터미널마다 `source launch_env.bash` 가 필요합니다.
+> 모든 터미널에서 `cd ~/gsam_ws && source launch_env.bash` 필수.
 
-**터미널 1 — Gazebo 시뮬레이션 + RViz**
-
+**빌드 (코드 변경 후)**
 ```bash
-source /opt/ros/jazzy/setup.bash && source install/setup.bash
+colcon build --packages-select grounded_sam_pkg mask_projection_pkg rgbd_projection
+```
+
+**터미널 1 — Gazebo + Bridge + RViz**
+```bash
 ros2 launch rgbd_projection rgbd_sim.launch.py
 ```
 
-**터미널 2 — Grounded SAM 노드**
-
+**터미널 2 — GSAM** (EE 카메라 RGB 입력, CPU ~30–40초/프레임)
 ```bash
-source launch_env.bash
 ros2 launch grounded_sam_pkg grounded_sam.launch.py \
+  image_topic:=/ee_camera/image \
   prompt:="cup, table, object"
 ```
 
-**터미널 3 — Qwen stub 노드**
-
+**터미널 3 — Qwen stub** (cup→TARGET, table→WORKSPACE, 나머지→OBSTACLE)
 ```bash
-source launch_env.bash
 ros2 run grounded_sam_pkg qwen_stub_node
 ```
 
-**터미널 4 — Mask Projection 노드**
-
+**터미널 4 — Multi-view projector** (EE + Top depth 융합 → /world_map)
 ```bash
-source launch_env.bash
-ros2 launch mask_projection_pkg mask_projector.launch.py \
-  initials:=cto
+ros2 launch mask_projection_pkg multi_view_projector.launch.py \
+  mask_topic:=/qwen/mask_image \
+  detections_topic:=/qwen/labeled_detections
 ```
 
-`initials` 는 출력 파일명에 붙는 접두사입니다. 생략하면 `cloud_original_{stamp}.ply` 형식으로 저장됩니다.
-
-Isaac Sim 등 다른 시뮬레이터 토픽으로 오버라이드:
-
+**Isaac Sim 전환 시 (팀원)**
 ```bash
-ros2 launch mask_projection_pkg mask_projector.launch.py \
-  initials:=cto \
-  depth_topic:=/isaac/depth \
-  camera_info_topic:=/isaac/camera_info \
-  output_frame_id:=camera_frame
+# 1. camera_extrinsics.yaml 복사 후 USD stage 값으로 수정
+cp src/mask_projection_pkg/config/camera_extrinsics.yaml \
+   src/mask_projection_pkg/config/camera_extrinsics_isaac.yaml
+
+# 2. multi_view_projector 재기동 (YAML + 토픽 오버라이드)
+ros2 launch mask_projection_pkg multi_view_projector.launch.py \
+  extrinsics_config:=$(pwd)/src/mask_projection_pkg/config/camera_extrinsics_isaac.yaml \
+  ee_depth_topic:=/isaac/ee/depth_image \
+  ee_camera_info_topic:=/isaac/ee/camera_info \
+  top_depth_topic:=/isaac/top/depth_image \
+  top_camera_info_topic:=/isaac/top/camera_info \
+  mask_topic:=/qwen/mask_image \
+  detections_topic:=/qwen/labeled_detections
 ```
 
 ---
@@ -218,32 +215,31 @@ ros2 launch mask_projection_pkg mask_projector.launch.py \
 
 추론 실행 시 `~/gsam_ws/output/` 에 자동 저장됩니다.
 
-| 파일 | 형식 | 설명 |
-|---|---|---|
-| `result_{initials}.jpg` | JPEG | bbox + mask 오버레이 이미지 (매 프레임 덮어씀) |
-| `cloud_original_{initials}_{stamp}.ply` | Binary PLY | 원본 포인트클라우드 (XYZ) |
-| `cloud_labeled_{initials}_{stamp}.ply` | Binary PLY | 라벨링된 포인트클라우드 (XYZ + RGB + category) |
+| 파일 | 설명 |
+|---|---|
+| `result_{initials}.jpg` | bbox + mask 오버레이 이미지 |
+| `world_map_{initials}_{stamp}.ply` | 월드 좌표계 라벨링 포인트클라우드 (XYZ + RGB + category) |
 
 - `{initials}` : `prompt` 각 단어의 첫 글자 (예: `"cup, table, object"` → `cto`)
-- `{stamp}` : depth 메시지 타임스탬프 (초 단위)
 - PLY 파일은 MeshLab, Open3D, CloudCompare 등으로 열 수 있습니다
 
 ---
 
 ## RViz 설정
 
-1. `LabeledPoints` 디스플레이 체크박스 켜기
+1. `PointCloud2` 디스플레이 추가 → Topic: `/world_map`
 2. `Color Transformer` → `RGB8` 선택
-3. 기존 `PointCloud2` (`/rgbd_camera/points`) 체크박스 끄기
+3. Fixed Frame → `world`
 
 포인트 색상:
 
 | 색상 | 카테고리 | 의미 |
 |---|---|---|
-| 회색 | FREE | 배경 / 빈 공간 |
+| 회색 | FREE | EE 뷰 배경 (비탐지 픽셀) |
 | 초록 | TARGET | 잡을 물체 |
 | 노랑 | WORKSPACE | 작업 테이블 |
 | 빨강 | OBSTACLE | 그 외 감지된 물체 |
+| 보라 | UNKNOWN | Top 뷰 기하 (분류 미적용) |
 
 ---
 
@@ -251,17 +247,18 @@ ros2 launch mask_projection_pkg mask_projector.launch.py \
 
 | 토픽 | 타입 | 발행 노드 | 설명 |
 |---|---|---|---|
-| `/rgbd_camera/image` | `sensor_msgs/Image` | Gazebo | RGB 이미지 |
-| `/rgbd_camera/depth_image` | `sensor_msgs/Image` | Gazebo | Depth (float32, m) |
-| `/rgbd_camera/camera_info` | `sensor_msgs/CameraInfo` | Gazebo | 카메라 내부 파라미터 |
-| `/rgbd_camera/points` | `sensor_msgs/PointCloud2` | Gazebo | Gazebo 원본 포인트클라우드 |
+| `/ee_camera/image` | `sensor_msgs/Image` | Gazebo | EE 카메라 RGB |
+| `/ee_camera/depth_image` | `sensor_msgs/Image` | Gazebo | EE Depth (float32, m) |
+| `/ee_camera/camera_info` | `sensor_msgs/CameraInfo` | Gazebo | EE 카메라 내부 파라미터 |
+| `/top_camera/depth_image` | `sensor_msgs/Image` | Gazebo | Top Depth (float32, m) |
+| `/top_camera/camera_info` | `sensor_msgs/CameraInfo` | Gazebo | Top 카메라 내부 파라미터 |
 | `/grounded_sam/mask_image` | `sensor_msgs/Image` | grounded_sam_node | 세그멘테이션 마스크 (mono8) |
-| `/grounded_sam/detections_json` | `std_msgs/String` | grounded_sam_node | 탐지 결과 JSON (idx, label, confidence, bbox_xyxy) |
+| `/grounded_sam/detections_json` | `std_msgs/String` | grounded_sam_node | 탐지 결과 JSON |
 | `/grounded_sam/annotated_image` | `sensor_msgs/Image` | grounded_sam_node | 시각화용 오버레이 이미지 |
 | `/qwen/mask_image` | `sensor_msgs/Image` | qwen_stub_node | 마스크 pass-through |
-| `/qwen/labeled_detections` | `std_msgs/String` | qwen_stub_node | category 필드 추가된 탐지 결과 JSON |
-| `/labeled_points` | `sensor_msgs/PointCloud2` | mask_projector_node | 라벨링된 포인트클라우드 |
-| `/projection_result` | `std_msgs/String` | mask_projector_node | 카테고리별 centroid JSON |
+| `/qwen/labeled_detections` | `std_msgs/String` | qwen_stub_node | category 필드 추가된 JSON |
+| `/world_map` | `sensor_msgs/PointCloud2` | multi_view_projector_node | EE+Top 융합 포인트클라우드 (world frame) |
+| `/world_map_result` | `std_msgs/String` | multi_view_projector_node | 카테고리별 centroid + bbox_3d JSON |
 
 ---
 
@@ -283,48 +280,33 @@ sam:
   device: "cpu"   # GPU 있으면 "cuda"
 ```
 
-모델 파일(`*.pth`)은 `models/` 에 직접 다운로드해야 합니다 (`.gitignore` 로 추적 제외됨).
-
-SAM 모델 크기 비교:
-
-| `model_type` | 파일 | 크기 | 속도 |
-|---|---|---|---|
-| `vit_h` | `sam_vit_h_4b8939.pth` | 2.4 GB | 느림 / 정확 |
-| `vit_l` | `sam_vit_l_0b3195.pth` | 1.2 GB | 중간 |
-| `vit_b` | `sam_vit_b_01ec64.pth` | 375 MB | 빠름 / 덜 정확 |
-
 ---
 
 ## 주의사항
 
 **CPU 환경 (노트북 등)**
-- `config/model_paths.yaml` 의 `device: "cpu"` 설정으로 GPU 없이 동작합니다.
-- SAM ViT-B + Grounding DINO SwinT 를 CPU 추론 시 **프레임당 30~40초** 소요됩니다.
+- SAM ViT-B + Grounding DINO SwinT CPU 추론 시 **프레임당 30~40초** 소요됩니다.
 
 **타임스탬프 동기화**
-- `mask_projector_node` 는 `ApproximateTimeSynchronizer` 를 사용하지 않습니다.
-- CPU 추론 지연(30~40초) 때문에 depth 큐와 timestamp 매칭이 불가능하기 때문입니다.
-- 대신 depth/camera_info/detections 최신값을 캐시하고, **mask_image 수신 시 즉시 projection** 을 트리거합니다.
-- qwen_stub_node 도 동일한 패턴 (detections 캐시 → mask 수신 시 트리거) 을 사용합니다.
+- `multi_view_projector_node` 는 `ApproximateTimeSynchronizer` 를 사용하지 않습니다.
+- CPU 추론 지연(30~40초) 때문에 depth 큐와 timestamp 매칭이 불가능합니다.
+- depth/camera_info/detections 최신값을 캐시하고 **mask_image 수신 시 즉시 projection** 을 트리거합니다.
 
 **QoS 설정**
 - Gazebo bridge 는 VOLATILE QoS 로 발행합니다.
-- `grounded_sam_node` 의 image subscription 도 VOLATILE(depth=10) 로 설정되어 있습니다.
 - TRANSIENT_LOCAL 로 구독하면 `incompatible QoS` 경고와 함께 이미지를 수신하지 못합니다.
 
 **`launch_env.bash` 필수**
 - venv site-packages, GroundingDINO, SAM 소스 경로를 `PYTHONPATH` 에 추가합니다.
-- `$GSAM_WS` 환경변수를 설정하고 `model_paths.yaml` 경로를 자동으로 치환합니다.
 - Grounded SAM 노드 실행 전 반드시 `source launch_env.bash` 를 먼저 실행하세요.
 
 **모델 가중치**
 - `models/*.pth` 는 `.gitignore` 로 추적되지 않습니다. 직접 다운로드하세요.
-- `gsam_ws_venv/` 도 추적되지 않습니다. 가상환경은 직접 생성하세요.
 
 ---
 
 ## 향후 계획
 
 - **Qwen VLM 연동**: `qwen_stub_node` 를 실제 Qwen API 호출로 교체. instruction 의미 해석으로 TARGET/WORKSPACE 결정
-- **MoveIt2 연동**: `/projection_result` 의 TARGET centroid → goal pose, OBSTACLE → 충돌 맵
-- **Isaac Sim 어댑터**: launch 토픽 파라미터 오버라이드만으로 전환 가능
+- **MoveIt2 연동**: `/world_map_result` 의 TARGET `centroid` + `bbox_3d_world` → goal pose, OBSTACLE + UNKNOWN → octomap 충돌 맵
+- **Isaac Sim 어댑터**: launch 토픽 파라미터 오버라이드 + `camera_extrinsics.yaml` 교체만으로 전환 가능

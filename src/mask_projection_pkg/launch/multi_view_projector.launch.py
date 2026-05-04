@@ -107,6 +107,12 @@ def generate_launch_description() -> LaunchDescription:
 
         # ── Optional filename prefix for saved PLY files ──────────────────────
         DeclareLaunchArgument('initials', default_value=''),
+
+        # ── Camera extrinsics YAML ────────────────────────────────────────────
+        # Gazebo demo default: package config/camera_extrinsics.yaml
+        # Isaac Sim: override with your own YAML containing R/t from USD stage.
+        #   extrinsics_config:=/path/to/camera_extrinsics_isaac.yaml
+        DeclareLaunchArgument('extrinsics_config', default_value=''),
     ]
 
     node = Node(
@@ -126,6 +132,7 @@ def generate_launch_description() -> LaunchDescription:
             'min_depth':             LaunchConfiguration('min_depth'),
             'max_depth':             LaunchConfiguration('max_depth'),
             'initials':              LaunchConfiguration('initials'),
+            'extrinsics_config':     LaunchConfiguration('extrinsics_config'),
         }],
     )
 
