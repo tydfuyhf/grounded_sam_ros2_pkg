@@ -161,7 +161,7 @@ colcon build
 
 ## 실행 (Gazebo 데모, prompt="cup, table, object")
 
-**빌드 (코드 변경 후)**
+**빌드**
 ```bash
 cd ~/gsam_ws && source launch_env.bash
 colcon build --packages-select grounded_sam_pkg mask_projection_pkg rgbd_projection
