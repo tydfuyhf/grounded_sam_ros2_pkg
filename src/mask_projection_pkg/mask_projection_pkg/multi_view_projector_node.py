@@ -64,12 +64,14 @@ pattern with message_filters.ApproximateTimeSynchronizer across ee_depth + mask.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import rclpy
-from builtin_interfaces.msg import Time
+import yaml
+from ament_index_python.packages import get_package_share_directory
 from cv_bridge import CvBridge
 from rclpy.node import Node
 from sensor_msgs.msg import CameraInfo, Image, PointCloud2
@@ -79,8 +81,8 @@ from .back_projection import depth_to_points
 from .cloud_builder import build_pointcloud2
 from .label_mapper import (
     CATEGORY_COLOR,
-    CATEGORY_FREE,
     CATEGORY_TARGET,
+    CATEGORY_UNKNOWN,
     CATEGORY_WORKSPACE,
     CategoryPoints,
     apply_labels,
@@ -88,24 +90,41 @@ from .label_mapper import (
 
 _OUTPUT_DIR = Path.home() / "gsam_ws" / "output"
 
-# ── Camera → world transforms ────────────────────────────────────────────────
-#
-# TODO (teammate): Replace np.eye(3) / np.zeros(3) with measured values.
-#
-# Convention:
-#   p_world = R @ p_cam + t
-#
-# _R_TOP : (3,3) rotation  — top camera axes expressed in world frame
-# _t_TOP : (3,)  translation — top camera optical centre in world frame (m)
-#
-_R_TOP: np.ndarray = np.eye(3, dtype=np.float64)    # TODO: fill in
-_t_TOP: np.ndarray = np.zeros(3, dtype=np.float64)  # TODO: fill in
 
-# _R_EE  : (3,3) rotation  — EE camera axes in world frame at home pose
-# _t_EE  : (3,)  translation — EE camera optical centre in world frame (m)
-#
-_R_EE: np.ndarray = np.eye(3, dtype=np.float64)     # TODO: fill in
-_t_EE: np.ndarray = np.zeros(3, dtype=np.float64)   # TODO: fill in
+def _load_extrinsics(
+    path: str,
+    logger,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Load camera extrinsics from YAML.  Returns (R_top, t_top, R_ee, t_ee).
+
+    YAML format expected:
+      ee_camera:
+        R: [[...], [...], [...]]
+        t: [x, y, z]
+      top_camera:
+        R: [[...], [...], [...]]
+        t: [x, y, z]
+
+    Falls back to identity / zeros on any error so the node still starts.
+    Convention: p_world = R @ p_cam + t  (camera optical frame → world frame)
+    """
+    try:
+        with open(path, 'r') as f:
+            cfg = yaml.safe_load(f)
+        R_top = np.array(cfg['top_camera']['R'], dtype=np.float64)
+        t_top = np.array(cfg['top_camera']['t'], dtype=np.float64)
+        R_ee  = np.array(cfg['ee_camera']['R'],  dtype=np.float64)
+        t_ee  = np.array(cfg['ee_camera']['t'],  dtype=np.float64)
+        assert R_top.shape == (3, 3) and t_top.shape == (3,)
+        assert R_ee.shape  == (3, 3) and t_ee.shape  == (3,)
+        logger.info(f'Loaded camera extrinsics from {path}')
+        return R_top, t_top, R_ee, t_ee
+    except Exception as exc:
+        logger.warn(
+            f'Failed to load extrinsics from "{path}": {exc}. '
+            'Using identity transforms — point cloud will be in camera frame.'
+        )
+        return np.eye(3), np.zeros(3), np.eye(3), np.zeros(3)
 
 
 class MultiViewProjectorNode(Node):
@@ -128,6 +147,12 @@ class MultiViewProjectorNode(Node):
         self.declare_parameter('min_depth', 0.05)
         self.declare_parameter('max_depth', 15.0)
 
+        _default_extrinsics = os.path.join(
+            get_package_share_directory('mask_projection_pkg'),
+            'config', 'camera_extrinsics.yaml',
+        )
+        self.declare_parameter('extrinsics_config', _default_extrinsics)
+
         top_depth_topic        = self.get_parameter('top_depth_topic').value
         top_camera_info_topic  = self.get_parameter('top_camera_info_topic').value
         ee_depth_topic         = self.get_parameter('ee_depth_topic').value
@@ -139,6 +164,14 @@ class MultiViewProjectorNode(Node):
         self._min_depth        = self.get_parameter('min_depth').value
         self._max_depth        = self.get_parameter('max_depth').value
         self._initials         = self.get_parameter('initials').value
+        extrinsics_path        = self.get_parameter('extrinsics_config').value
+        # launch file may pass '' (empty string) → fall back to package default
+        if not extrinsics_path:
+            extrinsics_path = _default_extrinsics
+
+        # ── camera extrinsics (loaded from YAML) ──────────────────────────────
+        (self._R_TOP, self._t_TOP,
+         self._R_EE,  self._t_EE) = _load_extrinsics(extrinsics_path, self.get_logger())
 
         # ── cache ─────────────────────────────────────────────────────────────
         self._bridge = CvBridge()
@@ -170,12 +203,8 @@ class MultiViewProjectorNode(Node):
         self.get_logger().info(
             f'MultiViewProjectorNode ready — '
             f'depth=[{self._min_depth}, {self._max_depth}]m  '
-            f'trigger={mask_topic}'
-        )
-        self.get_logger().warn(
-            'R/t transforms are identity placeholders. '
-            'Fill in _R_TOP/_t_TOP/_R_EE/_t_EE in multi_view_projector_node.py '
-            'before real deployment.'
+            f'trigger={mask_topic}  '
+            f'extrinsics={extrinsics_path}'
         )
 
     # ── cache callbacks ───────────────────────────────────────────────────────
@@ -211,10 +240,20 @@ class MultiViewProjectorNode(Node):
 
         all_category_points: List[CategoryPoints] = []
 
-        # ── Top camera view (depth only → all FREE) ───────────────────────────
+        # ── EE camera view first (need TARGET bbox before filtering top-view) ──
+        ee_pts = self._project_labeled(
+            self._ee_depth, self._ee_info, mask_msg,
+            self._latest_detections, self._R_EE, self._t_EE,
+        )
+        if ee_pts:
+            all_category_points.extend(ee_pts)
+
+        # ── Top camera view (depth only → UNKNOWN, TARGET region excluded) ─────
         if self._top_depth is not None and self._top_info is not None:
-            top_pts = self._project_free(self._top_depth, self._top_info,
-                                         _R_TOP, _t_TOP)
+            target_bbox = _compute_target_bbox(ee_pts)
+            top_pts = self._project_unknown(self._top_depth, self._top_info,
+                                            self._R_TOP, self._t_TOP,
+                                            exclude_bbox=target_bbox)
             if top_pts is not None:
                 all_category_points.append(top_pts)
         else:
@@ -222,14 +261,6 @@ class MultiViewProjectorNode(Node):
                 'Top camera not available — publishing EE view only. '
                 'Check top_depth_topic / top_camera_info_topic parameters.'
             )
-
-        # ── EE camera view (GSAM mask → semantic labels) ──────────────────────
-        ee_pts = self._project_labeled(
-            self._ee_depth, self._ee_info, mask_msg,
-            self._latest_detections, _R_EE, _t_EE,
-        )
-        if ee_pts:
-            all_category_points.extend(ee_pts)
 
         if not all_category_points:
             self.get_logger().warn('No valid points from either camera.')
@@ -258,14 +289,15 @@ class MultiViewProjectorNode(Node):
 
     # ── projection helpers ────────────────────────────────────────────────────
 
-    def _project_free(
+    def _project_unknown(
         self,
-        depth_msg: Image,
-        info_msg:  CameraInfo,
-        R: np.ndarray,
-        t: np.ndarray,
+        depth_msg:    Image,
+        info_msg:     CameraInfo,
+        R:            np.ndarray,
+        t:            np.ndarray,
+        exclude_bbox: Optional[np.ndarray] = None,
     ) -> Optional[CategoryPoints]:
-        """Back-project depth image and label all points FREE (no GSAM)."""
+        """Back-project top-view depth → UNKNOWN, filtering out TARGET bbox region."""
         depth = self._bridge.imgmsg_to_cv2(depth_msg, desired_encoding='32FC1')
         K     = np.array(info_msg.k, dtype=np.float64).reshape(3, 3)
 
@@ -276,7 +308,16 @@ class MultiViewProjectorNode(Node):
             return None
 
         pts_world = (R @ pts_cam.T).T + t
-        return _make_free_points(pts_world)
+
+        if exclude_bbox is not None:
+            lo, hi   = exclude_bbox          # (3,) each
+            inside   = np.all((pts_world >= lo) & (pts_world <= hi), axis=1)
+            pts_world = pts_world[~inside]
+
+        if len(pts_world) == 0:
+            return None
+
+        return _make_unknown_points(pts_world)
 
     def _project_labeled(
         self,
@@ -308,28 +349,44 @@ class MultiViewProjectorNode(Node):
 
 # ── module-level helpers ──────────────────────────────────────────────────────
 
-def _make_free_points(points: np.ndarray) -> CategoryPoints:
-    """Wrap an (N, 3) world-frame array as a FREE CategoryPoints."""
+_TARGET_BBOX_MARGIN: float = 0.05  # metres — padding around TARGET bbox when filtering top-view
+
+
+def _make_unknown_points(points: np.ndarray) -> CategoryPoints:
+    """Wrap an (N, 3) world-frame array as UNKNOWN CategoryPoints (top-view geometry)."""
     n     = len(points)
-    color = CATEGORY_COLOR[CATEGORY_FREE]
+    color = CATEGORY_COLOR[CATEGORY_UNKNOWN]
     return CategoryPoints(
-        label      = 'free',
-        category   = CATEGORY_FREE,
+        label      = 'unknown',
+        category   = CATEGORY_UNKNOWN,
         points     = points.astype(np.float32),
         colors     = np.tile(np.array(color, dtype=np.uint8), (n, 1)),
-        categories = np.full(n, CATEGORY_FREE, dtype=np.uint8),
+        categories = np.full(n, CATEGORY_UNKNOWN, dtype=np.uint8),
     )
+
+
+def _compute_target_bbox(
+    category_points: List[CategoryPoints],
+) -> Optional[np.ndarray]:
+    """Return (2,3) [[xmin,ymin,zmin],[xmax,ymax,zmax]] for TARGET points + margin, or None."""
+    for cp in category_points:
+        if cp.category == CATEGORY_TARGET and len(cp.points) > 0:
+            lo = cp.points.min(axis=0) - _TARGET_BBOX_MARGIN
+            hi = cp.points.max(axis=0) + _TARGET_BBOX_MARGIN
+            return np.array([lo, hi])
+    return None
 
 
 def _build_result_json(category_points: List[CategoryPoints]) -> str:
     """
-    JSON summary: label, centroid (world frame), point_count per category.
+    JSON summary per category: label, centroid, bbox_3d_world, point_count.
 
-    Shape (extensible for Qwen target_coordinate protocol):
     {
-      "target":    {"label": "cup",   "centroid": [x, y, z], "point_count": N},
-      "workspace": {"label": "table", "centroid": [x, y, z], "point_count": N},
-      "free":      {"label": "free",  "centroid": [x, y, z], "point_count": N}
+      "target":    {"label": "cup",   "centroid": [x,y,z],
+                    "bbox_3d_world": {"min": [x,y,z], "max": [x,y,z]},
+                    "point_count": N},
+      "workspace": { ... },
+      ...
     }
 
     # TODO (Qwen integration): Replace prompt-order-based category assignment with
@@ -345,10 +402,16 @@ def _build_result_json(category_points: List[CategoryPoints]) -> str:
     for cp in category_points:
         key      = _CATEGORY_KEY.get(cp.category, cp.label)
         centroid = cp.points.mean(axis=0).tolist()
+        pts_min  = cp.points.min(axis=0).tolist()
+        pts_max  = cp.points.max(axis=0).tolist()
         out[key] = {
-            'label':       cp.label,
-            'centroid':    [round(v, 4) for v in centroid],
-            'point_count': len(cp.points),
+            'label':         cp.label,
+            'centroid':      [round(v, 4) for v in centroid],
+            'bbox_3d_world': {
+                'min': [round(v, 4) for v in pts_min],
+                'max': [round(v, 4) for v in pts_max],
+            },
+            'point_count':   len(cp.points),
         }
     return json.dumps(out)
 

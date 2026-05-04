@@ -33,10 +33,11 @@ import numpy as np
 
 
 # ── Category IDs ─────────────────────────────────────────────────────────────
-CATEGORY_FREE:      int = 0   # background / unoccupied space
+CATEGORY_FREE:      int = 0   # background / unoccupied space (EE view)
 CATEGORY_TARGET:    int = 1   # object to be moved
 CATEGORY_WORKSPACE: int = 2   # surface / operational area
 CATEGORY_OBSTACLE:  int = 3   # anything else detected → treat as obstacle
+CATEGORY_UNKNOWN:   int = 4   # top-view geometry (unclassified by GSAM)
 
 # ── Per-category color (R, G, B) ─────────────────────────────────────────────
 CATEGORY_COLOR: Dict[int, tuple] = {
@@ -44,6 +45,7 @@ CATEGORY_COLOR: Dict[int, tuple] = {
     CATEGORY_TARGET:    (  0, 200,  80),  # green
     CATEGORY_WORKSPACE: (255, 220,   0),  # yellow
     CATEGORY_OBSTACLE:  (220,  40,  40),  # red
+    CATEGORY_UNKNOWN:   (150,  80, 200),  # purple
 }
 
 # ── Mask pixel value → category ──────────────────────────────────────────────
