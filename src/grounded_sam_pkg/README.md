@@ -67,7 +67,7 @@ mask pixel 값은 배열의 1-based 인덱스입니다 (`idx=0` → pixel=1).
 
 | 파라미터 | 기본값 | 설명 |
 |---|---|---|
-| `image_topic` | `/rgbd_camera/image` | 구독할 RGB 이미지 토픽 |
+| `image_topic` | `/ee_camera/image` | 구독할 RGB 이미지 토픽 |
 | `prompt` | `"object"` | 탐지할 물체 텍스트 프롬프트 (쉼표 구분) |
 | `model_config` | `config/model_paths.yaml` | 모델 경로 YAML |
 

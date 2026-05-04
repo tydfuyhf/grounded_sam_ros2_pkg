@@ -165,6 +165,9 @@ class MultiViewProjectorNode(Node):
         self._max_depth        = self.get_parameter('max_depth').value
         self._initials         = self.get_parameter('initials').value
         extrinsics_path        = self.get_parameter('extrinsics_config').value
+        # launch file may pass '' (empty string) → fall back to package default
+        if not extrinsics_path:
+            extrinsics_path = _default_extrinsics
 
         # ── camera extrinsics (loaded from YAML) ──────────────────────────────
         (self._R_TOP, self._t_TOP,
