@@ -129,12 +129,11 @@ Top 카메라 depth only           →  UNKNOWN (보라), TARGET bbox 내부 제
 | `initials` | `''` | PLY 파일명 접두사 |
 | `extrinsics_config` | (설치된 YAML 경로) | 카메라 외부 파라미터 YAML |
 
-### 실행 (Qwen stub 사용 시)
+### 실행
 
 ```bash
-ros2 launch mask_projection_pkg multi_view_projector.launch.py \
-  mask_topic:=/qwen/mask_image \
-  detections_topic:=/qwen/labeled_detections
+cd ~/gsam_ws && source launch_env.bash
+ros2 launch mask_projection_pkg multi_view_projector.launch.py
 ```
 
 ---

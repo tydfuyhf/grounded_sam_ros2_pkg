@@ -88,12 +88,15 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('ee_camera_info_topic',
                               default_value='/ee_camera/camera_info'),
 
-        # ── GSAM output topics (published by grounded_sam_pkg) ────────────────
-        # These usually stay the same across simulators.
+        # ── Qwen / stub output topics ─────────────────────────────────────────
+        # Default: qwen_stub_node (or real Qwen) output.
+        # To bypass Qwen and connect directly to GSAM, override:
+        #   mask_topic:=/grounded_sam/mask_image
+        #   detections_topic:=/grounded_sam/detections_json
         DeclareLaunchArgument('mask_topic',
-                              default_value='/grounded_sam/mask_image'),
+                              default_value='/qwen/mask_image'),
         DeclareLaunchArgument('detections_topic',
-                              default_value='/grounded_sam/detections_json'),
+                              default_value='/qwen/labeled_detections'),
 
         # ── Output topics ─────────────────────────────────────────────────────
         DeclareLaunchArgument('output_cloud_topic',

@@ -190,9 +190,7 @@ ros2 run grounded_sam_pkg qwen_stub_node
 **터미널 4 — Multi-view projector** (EE + Top depth 융합 → /world_map)
 ```bash
 cd ~/gsam_ws && source launch_env.bash
-ros2 launch mask_projection_pkg multi_view_projector.launch.py \
-  mask_topic:=/qwen/mask_image \
-  detections_topic:=/qwen/labeled_detections
+ros2 launch mask_projection_pkg multi_view_projector.launch.py
 ```
 
 **Isaac Sim 전환 시 (팀원)**
