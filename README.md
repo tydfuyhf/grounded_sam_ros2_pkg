@@ -161,20 +161,21 @@ colcon build
 
 ## 실행 (Gazebo 데모, prompt="cup, table, object")
 
-> 모든 터미널에서 `cd ~/gsam_ws && source launch_env.bash` 필수.
-
 **빌드 (코드 변경 후)**
 ```bash
+cd ~/gsam_ws && source launch_env.bash
 colcon build --packages-select grounded_sam_pkg mask_projection_pkg rgbd_projection
 ```
 
 **터미널 1 — Gazebo + Bridge + RViz**
 ```bash
+cd ~/gsam_ws && source launch_env.bash
 ros2 launch rgbd_projection rgbd_sim.launch.py
 ```
 
 **터미널 2 — GSAM** (EE 카메라 RGB 입력, CPU ~30–40초/프레임)
 ```bash
+cd ~/gsam_ws && source launch_env.bash
 ros2 launch grounded_sam_pkg grounded_sam.launch.py \
   image_topic:=/ee_camera/image \
   prompt:="cup, table, object"
@@ -182,11 +183,13 @@ ros2 launch grounded_sam_pkg grounded_sam.launch.py \
 
 **터미널 3 — Qwen stub** (cup→TARGET, table→WORKSPACE, 나머지→OBSTACLE)
 ```bash
+cd ~/gsam_ws && source launch_env.bash
 ros2 run grounded_sam_pkg qwen_stub_node
 ```
 
 **터미널 4 — Multi-view projector** (EE + Top depth 융합 → /world_map)
 ```bash
+cd ~/gsam_ws && source launch_env.bash
 ros2 launch mask_projection_pkg multi_view_projector.launch.py \
   mask_topic:=/qwen/mask_image \
   detections_topic:=/qwen/labeled_detections
@@ -199,6 +202,7 @@ cp src/mask_projection_pkg/config/camera_extrinsics.yaml \
    src/mask_projection_pkg/config/camera_extrinsics_isaac.yaml
 
 # 2. multi_view_projector 재기동 (YAML + 토픽 오버라이드)
+cd ~/gsam_ws && source launch_env.bash
 ros2 launch mask_projection_pkg multi_view_projector.launch.py \
   extrinsics_config:=$(pwd)/src/mask_projection_pkg/config/camera_extrinsics_isaac.yaml \
   ee_depth_topic:=/isaac/ee/depth_image \
