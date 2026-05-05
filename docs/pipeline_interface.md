@@ -84,11 +84,17 @@ mask pixel 값 = 배열의 1-based 인덱스 (`idx=0` → pixel=1).
     "bbox_3d_world": {"min": [x, y, z], "max": [x, y, z]},
     "point_count": 8000
   },
-  "obstacle": {
+  "object": {
     "label": "object",
     "centroid": [x, y, z],
     "bbox_3d_world": {"min": [x, y, z], "max": [x, y, z]},
     "point_count": 400
+  },
+  "free": {
+    "label": "free",
+    "centroid": [x, y, z],
+    "bbox_3d_world": {"min": [x, y, z], "max": [x, y, z]},
+    "point_count": 20000
   },
   "unknown": {
     "label": "unknown",

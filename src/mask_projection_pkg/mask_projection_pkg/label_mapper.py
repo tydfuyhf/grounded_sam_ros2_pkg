@@ -14,10 +14,11 @@ This makes /labeled_points a complete scene representation
 suitable for MoveIt or other planners.
 
 Color scheme (R, G, B):
-  TARGET    — yellow  (255, 220, 0)   high visibility
-  WORKSPACE — green   (0,   200, 80)  safe surface
+  TARGET    — green   (0,   200, 80)  object to grab
+  WORKSPACE — yellow  (255, 220,  0)  work surface
   OBSTACLE  — red     (220,  40, 40)  danger
   FREE      — grey    (80,   80, 80)  unoccupied space
+  UNKNOWN   — purple  (150,  80,200)  top-view geometry (unclassified)
 
 Extending later (e.g. Qwen structured JSON with target_coordinate field):
   → Replace / extend MASK_VALUE_TO_CATEGORY, or add a factory that

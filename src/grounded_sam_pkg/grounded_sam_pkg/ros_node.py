@@ -2,7 +2,7 @@
 ROS2 node for GroundedSAMPipeline.
 
 Subscribes:
-  <image_topic>  (sensor_msgs/Image, default: /camera/image_raw)
+  <image_topic>  (sensor_msgs/Image, default: /ee_camera/image)
     — raw camera image
 
 Publishes:
@@ -20,7 +20,7 @@ Publishes:
 Parameters:
   model_config  (string) : absolute path to model_paths.yaml  [required]
   prompt        (string) : object noun phrase, e.g. "bottle, cup"  [default: "object"]
-  image_topic   (string) : topic to subscribe to  [default: /camera/image_raw]
+  image_topic   (string) : topic to subscribe to  [default: /ee_camera/image]
 """
 
 import json
