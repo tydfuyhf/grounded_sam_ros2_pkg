@@ -26,20 +26,21 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 ee_camera:
-  # SDF pose: x=0.5  y=0  z=2.5 | roll=0  pitch=0.45rad  yaw=π
-  # Camera is at (0.5, 0, 2.5), looking toward −X direction, tilted ~26° down.
-  # Adjust pitch in SDF and recompute R if the EE camera view is off.
-  t: [0.5, 0.0, 2.5]
+  # SDF pose: x=-1  y=2  z=1.8 | roll=0  pitch=0.360rad (~20.6°)  yaw=π
+  # Camera at (-1, 2, 1.8), optical axis points at cup centre (-3, 2, 1.047).
+  # R = [[0, sin(p), -cos(p)], [1, 0, 0], [0, -cos(p), -sin(p)]]  where p=0.360 rad
+  # sin(0.360)=0.352, cos(0.360)=0.936
+  t: [-1.0, 2.0, 1.8]
   R:
-    - [ 0.0,  0.435, -0.900]   # world X  ←  cam optical axes
+    - [ 0.0,  0.352, -0.936]   # world X  ←  cam optical axes
     - [ 1.0,  0.0,    0.0  ]   # world Y
-    - [ 0.0, -0.900, -0.435]   # world Z
+    - [ 0.0, -0.936, -0.352]   # world Z
 
 top_camera:
-  # SDF pose: x=-3  y=2  z=2.5 | roll=0  pitch=π/2=1.5708rad  yaw=0
-  # Camera is directly above the table centre, pointing straight down.
-  # Table top surface at z≈0.52 → camera-to-surface distance ≈ 2.0 m.
-  t: [-3.0, 2.0, 2.5]
+  # SDF pose: x=-3  y=2  z=3.5 | roll=0  pitch=π/2=1.5708rad  yaw=0
+  # Camera directly above table centre, pointing straight down.
+  # Table top at z≈0.992 (2× scale) → camera-to-surface distance ≈ 2.5 m.
+  t: [-3.0, 2.0, 3.5]
   R:
     - [ 0.0, -1.0,  0.0]       # world X  ←  cam optical axes
     - [-1.0,  0.0,  0.0]       # world Y

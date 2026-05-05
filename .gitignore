@@ -2,8 +2,6 @@ CLAUDE.md
 src/mask_projection_pkg/CLAUDE.md
 .vscode/
 
-# Gazebo demo — excluded from capstone integration branch
-src/rgbd_projection/
 
 build/
 install/
