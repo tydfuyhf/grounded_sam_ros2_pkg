@@ -87,19 +87,16 @@ source launch_env.bash && colcon build
 
 빌드:
 ```bash
-cd ~/gsam_ws && source launch_env.bash
 colcon build --packages-select grounded_sam_pkg mask_projection_pkg rgbd_projection
 ```
 
 터미널 1 — Gazebo + Bridge + RViz:
 ```bash
-cd ~/gsam_ws && source launch_env.bash
 ros2 launch rgbd_projection rgbd_sim.launch.py
 ```
 
 터미널 2 — GSAM:
 ```bash
-cd ~/gsam_ws && source launch_env.bash
 ros2 launch grounded_sam_pkg grounded_sam.launch.py \
   image_topic:=/ee_camera/image \
   prompt:="cup, table, object"
@@ -107,13 +104,11 @@ ros2 launch grounded_sam_pkg grounded_sam.launch.py \
 
 터미널 3 — Qwen stub:
 ```bash
-cd ~/gsam_ws && source launch_env.bash
 ros2 run grounded_sam_pkg qwen_stub_node
 ```
 
 터미널 4 — Multi-view projector:
 ```bash
-cd ~/gsam_ws && source launch_env.bash
 ros2 launch mask_projection_pkg multi_view_projector.launch.py
 ```
 
