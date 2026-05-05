@@ -20,7 +20,7 @@ ROS 2 + Gazebo 환경에서 RGB-D 카메라 이미지를 **Grounded SAM** 으로
 
 **rqt_graph — 노드 연결 구조**
 
-![rqt graph](docs/images/rqt_graph_qwun_sub.png)
+![rqt graph](docs/images/rqt_graph_qwen_sub_v2.png)
 
 ---
 
