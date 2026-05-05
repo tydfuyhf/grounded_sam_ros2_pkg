@@ -75,7 +75,6 @@ mask pixel 값은 배열의 1-based 인덱스입니다 (`idx=0` → pixel=1).
 
 ```bash
 ros2 launch grounded_sam_pkg grounded_sam.launch.py \
-  image_topic:=/ee_camera/image \
   prompt:="cup, table, object"
 ```
 

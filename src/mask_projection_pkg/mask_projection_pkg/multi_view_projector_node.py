@@ -5,11 +5,11 @@ Two-camera world-frame PointCloud2 builder.
 
 Pipeline
 --------
-  Top camera  : depth only  →  all points labeled FREE  (no GSAM on this view)
+  Top camera  : depth only  →  all points labeled UNKNOWN (purple, no GSAM on this view)
   EE camera   : depth + GSAM mask + detections  →  TARGET / WORKSPACE / OBSTACLE / FREE
 
-Both views are transformed to a common world frame using fixed (R, t) matrices,
-then merged into a single PointCloud2 published as /world_map.
+Both views are transformed to a common world frame using R/t loaded from
+camera_extrinsics.yaml (extrinsics_config parameter), then merged into /world_map.
 
 Subscriptions (all configurable via ROS 2 parameters):
   <top_depth_topic>        sensor_msgs/Image      (32FC1, meters)
@@ -27,14 +27,8 @@ Camera → world transforms
 -------------------------
 R_TOP, t_TOP  top camera frame → world frame  (camera is fixed to ceiling/stand)
 R_EE,  t_EE   EE camera frame  → world frame  (snapshot at robot home pose)
-
-# TODO (teammate): Replace the identity placeholders below with actual values.
-#   Measurement procedure:
-#     1. Place a calibration target at a known world-frame coordinate.
-#     2. Measure R (3×3 rotation matrix, camera-to-world) and
-#        t (3-vector, camera origin in world frame, meters).
-#     3. Paste the values into _R_TOP/_t_TOP and _R_EE/_t_EE below.
-#   For Isaac Sim: use the camera pose from the stage (USD transform).
+Values are loaded from config/camera_extrinsics.yaml at startup.
+Isaac Sim 전환 시 extrinsics_config 인자로 새 YAML 경로를 지정하세요.
 
 Isaac Sim topic override
 ------------------------
@@ -48,7 +42,6 @@ All topic names are ROS 2 parameters.  Override them at launch time:
 
 GSAM node must subscribe to the EE camera RGB topic:
   ros2 launch grounded_sam_pkg grounded_sam.launch.py \
-    image_topic:=/ee_camera/image \
     prompt:="cup, table, object"
 
 Design note — cache pattern (same as projector_node.py)

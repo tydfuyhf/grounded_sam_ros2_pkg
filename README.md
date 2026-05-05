@@ -101,7 +101,6 @@ ros2 launch rgbd_projection rgbd_sim.launch.py
 ```bash
 cd ~/gsam_ws && source launch_env.bash
 ros2 launch grounded_sam_pkg grounded_sam.launch.py \
-  image_topic:=/ee_camera/image \
   prompt:="cup, table, object"
 ```
 
