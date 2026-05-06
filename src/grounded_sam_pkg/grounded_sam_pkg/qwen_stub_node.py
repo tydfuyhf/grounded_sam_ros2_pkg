@@ -1,26 +1,9 @@
 """
-qwen_stub_node.py
+Qwen VLM 자리를 대신하는 stub 노드.
+mask_image 수신 시 detections의 label → category 변환 후 발행.
 
-Stub bridge between grounded_sam_node and projector_node.
-Replaces the real Qwen VLM while it is not yet integrated.
-
-Subscribes:
-  /grounded_sam/detections_json  std_msgs/String  — cache
-  /grounded_sam/mask_image       sensor_msgs/Image — trigger
-
-On each mask_image:
-  1. Adds "category" field to each detection using label text lookup.
-  2. Publishes /qwen/labeled_detections  (detections BEFORE mask so projector
-     has the latest detections when mask triggers projection).
-  3. Publishes /qwen/mask_image  (pass-through, triggers projector).
-
-LABEL_TO_CATEGORY is hardcoded for the Gazebo demo scene (one cup, one table).
-Replace with real Qwen inference to generalise.
-
-# WARNING: labeled_detections and mask_image are two separate messages with a
-# slight timing gap. projector_node caches detections and triggers on mask —
-# safe for CPU inference (30-40 s per frame). If moving to GPU (sub-second
-# inference), add ApproximateTimeSynchronizer in projector_node instead.
+NOTE: labeled_detections 와 mask_image 는 별도 메시지로 짧은 시간차가 있음.
+projector_node가 cache 방식이라 CPU 추론(30-40s/frame) 환경에서는 문제없음.
 """
 from __future__ import annotations
 

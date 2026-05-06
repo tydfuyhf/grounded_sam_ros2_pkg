@@ -1,59 +1,4 @@
-"""
-multi_view_projector_node.py
-
-Two-camera world-frame PointCloud2 builder.
-
-Pipeline
---------
-  Top camera  : depth only  →  all points labeled UNKNOWN (purple, no GSAM on this view)
-  EE camera   : depth + GSAM mask + detections  →  TARGET / WORKSPACE / OBSTACLE / FREE
-
-Both views are transformed to a common world frame using R/t loaded from
-camera_extrinsics.yaml (extrinsics_config parameter), then merged into /world_map.
-
-Subscriptions (all configurable via ROS 2 parameters):
-  <top_depth_topic>        sensor_msgs/Image      (32FC1, meters)
-  <top_camera_info_topic>  sensor_msgs/CameraInfo
-  <ee_depth_topic>         sensor_msgs/Image      (32FC1, meters)
-  <ee_camera_info_topic>   sensor_msgs/CameraInfo
-  <mask_topic>             sensor_msgs/Image      (mono8, 1-based)   ← TRIGGER
-  <detections_topic>       std_msgs/String        (JSON array)
-
-Publications:
-  <output_cloud_topic>     sensor_msgs/PointCloud2  (frame_id="world")
-  <output_result_topic>    std_msgs/String          (JSON centroid summary)
-
-Camera → world transforms
--------------------------
-R_TOP, t_TOP  top camera frame → world frame  (camera is fixed to ceiling/stand)
-R_EE,  t_EE   EE camera frame  → world frame  (snapshot at robot home pose)
-Values are loaded from config/camera_extrinsics.yaml at startup.
-Isaac Sim 전환 시 extrinsics_config 인자로 새 YAML 경로를 지정하세요.
-
-Isaac Sim topic override
-------------------------
-All topic names are ROS 2 parameters.  Override them at launch time:
-  ros2 launch mask_projection_pkg multi_view_projector.launch.py \
-    top_depth_topic:=/isaac/top/depth \
-    top_camera_info_topic:=/isaac/top/camera_info \
-    ee_depth_topic:=/isaac/ee/depth \
-    ee_camera_info_topic:=/isaac/ee/camera_info
-(see multi_view_projector.launch.py for the full override example)
-
-GSAM node must subscribe to the EE camera RGB topic:
-  ros2 launch grounded_sam_pkg grounded_sam.launch.py \
-    prompt:="cup, table, object"
-
-Design note — cache pattern (same as projector_node.py)
----------------------------------------------------------
-GSAM runs on CPU (~30–40 s/frame).  By the time mask_image arrives, the depth
-queue has moved far ahead, so timestamp-based sync fails.  Instead, depth /
-camera_info / detections are cached as "latest", and projection fires the
-moment a new mask_image arrives.
-
-When moving to Isaac Sim with GPU inference (real-time), replace the cache
-pattern with message_filters.ApproximateTimeSynchronizer across ee_depth + mask.
-"""
+"""Two-camera world-frame PointCloud2 builder."""
 from __future__ import annotations
 
 import json
@@ -64,6 +9,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import rclpy
 import yaml
+from scipy.spatial import KDTree
 from ament_index_python.packages import get_package_share_directory
 from cv_bridge import CvBridge
 from rclpy.node import Node
@@ -74,6 +20,7 @@ from .back_projection import depth_to_points
 from .cloud_builder import build_pointcloud2
 from .label_mapper import (
     CATEGORY_COLOR,
+    CATEGORY_FREE,
     CATEGORY_TARGET,
     CATEGORY_UNKNOWN,
     CATEGORY_WORKSPACE,
@@ -89,17 +36,7 @@ def _load_extrinsics(
     logger,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Load camera extrinsics from YAML.  Returns (R_top, t_top, R_ee, t_ee).
-
-    YAML format expected:
-      ee_camera:
-        R: [[...], [...], [...]]
-        t: [x, y, z]
-      top_camera:
-        R: [[...], [...], [...]]
-        t: [x, y, z]
-
     Falls back to identity / zeros on any error so the node still starts.
-    Convention: p_world = R @ p_cam + t  (camera optical frame → world frame)
     """
     try:
         with open(path, 'r') as f:
@@ -126,8 +63,6 @@ class MultiViewProjectorNode(Node):
         super().__init__('multi_view_projector_node')
 
         # ── parameters ───────────────────────────────────────────────────────
-        # All topic names are parameters so Isaac Sim can override them without
-        # touching this file.  Default values match the Gazebo bridge setup.
         self.declare_parameter('top_depth_topic',        '/top_camera/depth_image')
         self.declare_parameter('top_camera_info_topic',  '/top_camera/camera_info')
         self.declare_parameter('ee_depth_topic',         '/ee_camera/depth_image')
@@ -139,6 +74,7 @@ class MultiViewProjectorNode(Node):
         self.declare_parameter('initials',               '')
         self.declare_parameter('min_depth', 0.05)
         self.declare_parameter('max_depth', 15.0)
+        self.declare_parameter('ee_seg_filter_radius', 0.015)  # metres — XY footprint radius
 
         _default_extrinsics = os.path.join(
             get_package_share_directory('mask_projection_pkg'),
@@ -156,6 +92,7 @@ class MultiViewProjectorNode(Node):
         output_result_topic    = self.get_parameter('output_result_topic').value
         self._min_depth        = self.get_parameter('min_depth').value
         self._max_depth        = self.get_parameter('max_depth').value
+        self._ee_seg_filter_radius = self.get_parameter('ee_seg_filter_radius').value
         self._initials         = self.get_parameter('initials').value
         extrinsics_path        = self.get_parameter('extrinsics_config').value
         # launch file may pass '' (empty string) → fall back to package default
@@ -186,7 +123,6 @@ class MultiViewProjectorNode(Node):
         self.create_subscription(Image,      ee_depth_topic,        self._ee_depth_cb,   10)
         self.create_subscription(CameraInfo, ee_camera_info_topic,  self._ee_info_cb,    10)
         self.create_subscription(String,     detections_topic,      self._json_cb,       10)
-        # mask_image arrival = TRIGGER for projection
         self.create_subscription(Image,      mask_topic,            self._mask_cb,       10)
 
         # ── publishers ────────────────────────────────────────────────────────
@@ -233,7 +169,7 @@ class MultiViewProjectorNode(Node):
 
         all_category_points: List[CategoryPoints] = []
 
-        # ── EE camera view first (need TARGET bbox before filtering top-view) ──
+        # ── EE camera view first (seg footprint needed before top-view filtering) ──
         ee_pts = self._project_labeled(
             self._ee_depth, self._ee_info, mask_msg,
             self._latest_detections, self._R_EE, self._t_EE,
@@ -241,12 +177,13 @@ class MultiViewProjectorNode(Node):
         if ee_pts:
             all_category_points.extend(ee_pts)
 
-        # ── Top camera view (depth only → UNKNOWN, TARGET region excluded) ─────
+        # ── Top camera view (depth only → UNKNOWN, EE seg footprint 제외) ────────
         if self._top_depth is not None and self._top_info is not None:
-            target_bbox = _compute_target_bbox(ee_pts)
+            ee_seg_pts = _collect_seg_points(ee_pts)
             top_pts = self._project_unknown(self._top_depth, self._top_info,
                                             self._R_TOP, self._t_TOP,
-                                            exclude_bbox=target_bbox)
+                                            ee_seg_pts=ee_seg_pts,
+                                            ee_seg_filter_radius=self._ee_seg_filter_radius)
             if top_pts is not None:
                 all_category_points.append(top_pts)
         else:
@@ -264,11 +201,11 @@ class MultiViewProjectorNode(Node):
             ', '.join(f'{cp.label}={len(cp.points)}pts' for cp in all_category_points)
         )
 
-        # ── publish ───────────────────────────────────────────────────────────
         header = Header()
         header.stamp    = self.get_clock().now().to_msg()
         header.frame_id = 'world'
 
+        # ── publish ───────────────────────────────────────────────────────────
         self._pub_cloud.publish(build_pointcloud2(header, all_category_points))
         self._pub_result.publish(String(data=_build_result_json(all_category_points)))
 
@@ -284,13 +221,15 @@ class MultiViewProjectorNode(Node):
 
     def _project_unknown(
         self,
-        depth_msg:    Image,
-        info_msg:     CameraInfo,
-        R:            np.ndarray,
-        t:            np.ndarray,
-        exclude_bbox: Optional[np.ndarray] = None,
+        depth_msg:             Image,
+        info_msg:              CameraInfo,
+        R:                     np.ndarray,
+        t:                     np.ndarray,
+        ee_seg_pts:            Optional[np.ndarray] = None,
+        ee_seg_filter_radius:  float = 0.015,
     ) -> Optional[CategoryPoints]:
-        """Back-project top-view depth → UNKNOWN, filtering out TARGET bbox region."""
+        """Back-project top-view depth → UNKNOWN, removing points within
+        ee_seg_filter_radius (XY plane) of any EE-segmented point."""
         depth = self._bridge.imgmsg_to_cv2(depth_msg, desired_encoding='32FC1')
         K     = np.array(info_msg.k, dtype=np.float64).reshape(3, 3)
 
@@ -302,10 +241,10 @@ class MultiViewProjectorNode(Node):
 
         pts_world = (R @ pts_cam.T).T + t
 
-        if exclude_bbox is not None:
-            lo, hi   = exclude_bbox          # (3,) each
-            inside   = np.all((pts_world >= lo) & (pts_world <= hi), axis=1)
-            pts_world = pts_world[~inside]
+        if ee_seg_pts is not None and len(ee_seg_pts) > 0:
+            tree  = KDTree(ee_seg_pts[:, :2])
+            dists, _ = tree.query(pts_world[:, :2], workers=-1)
+            pts_world = pts_world[dists > ee_seg_filter_radius]
 
         if len(pts_world) == 0:
             return None
@@ -342,7 +281,12 @@ class MultiViewProjectorNode(Node):
 
 # ── module-level helpers ──────────────────────────────────────────────────────
 
-_TARGET_BBOX_MARGIN: float = 0.05  # metres — padding around TARGET bbox when filtering top-view
+def _collect_seg_points(category_points: List[CategoryPoints]) -> Optional[np.ndarray]:
+    """EE CategoryPoints에서 FREE 제외한 seg 포인트 XY만 모아 (N,2) 반환."""
+    seg = [cp.points for cp in category_points if cp.category != CATEGORY_FREE]
+    if not seg:
+        return None
+    return np.concatenate(seg, axis=0)
 
 
 def _make_unknown_points(points: np.ndarray) -> CategoryPoints:
@@ -358,17 +302,6 @@ def _make_unknown_points(points: np.ndarray) -> CategoryPoints:
     )
 
 
-def _compute_target_bbox(
-    category_points: List[CategoryPoints],
-) -> Optional[np.ndarray]:
-    """Return (2,3) [[xmin,ymin,zmin],[xmax,ymax,zmax]] for TARGET points + margin, or None."""
-    for cp in category_points:
-        if cp.category == CATEGORY_TARGET and len(cp.points) > 0:
-            lo = cp.points.min(axis=0) - _TARGET_BBOX_MARGIN
-            hi = cp.points.max(axis=0) + _TARGET_BBOX_MARGIN
-            return np.array([lo, hi])
-    return None
-
 
 def _build_result_json(category_points: List[CategoryPoints]) -> str:
     """
@@ -381,11 +314,6 @@ def _build_result_json(category_points: List[CategoryPoints]) -> str:
       "workspace": { ... },
       ...
     }
-
-    # TODO (Qwen integration): Replace prompt-order-based category assignment with
-    #   Qwen VLM output.  Qwen will determine which mask ID is TARGET vs WORKSPACE.
-    #   Expected change: build a custom MASK_VALUE_TO_CATEGORY dict from Qwen's JSON
-    #   and pass it into apply_labels() before calling this function.
     """
     _CATEGORY_KEY = {
         CATEGORY_TARGET:    'target',
