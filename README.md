@@ -1,4 +1,4 @@
-# grounded_sam_ros2_pkg
+# grounded_sam_ros2_perception
 
 ROS 2 + Gazebo 환경에서 RGB-D 카메라 이미지를 **Grounded SAM** 으로 세그멘테이션하고,  
 결과 마스크를 Depth 이미지와 결합해 **라벨링된 3D PointCloud2** 를 생성하는 파이프라인입니다.
@@ -69,8 +69,8 @@ Gazebo (rgbd_projection)
 ## 설치
 
 ```bash
-git clone --recurse-submodules https://github.com/tydfuyhf/grounded_sam_ros2_pkg.git
-cd grounded_sam_ros2_pkg
+git clone --recurse-submodules https://github.com/tydfuyhf/grounded_sam_ros2_perception.git
+cd grounded_sam_ros2_perception
 python3 -m venv gsam_ws_venv && source gsam_ws_venv/bin/activate
 pip install torch torchvision
 pip install -e external/GroundingDINO -e external/segment-anything
