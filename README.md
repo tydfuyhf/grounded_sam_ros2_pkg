@@ -14,10 +14,16 @@ ROS 2 + Gazebo 환경에서 RGB-D 카메라 이미지를 **Grounded SAM** 으로
 
 ![Annotated image](docs/images/annotated_cto.jpg)
 
-**RViz2 — Labeled PointCloud2**
+**RViz2 — EE-view Labeled PointCloud2**
 
 ![RViz labeled points](docs/images/labled_pointcloud_cto.png)
 
+Top / Front / Side view에서 확인한 `/world_map` 결과입니다.  
+EE-view segmentation 결과와 top-view depth geometry를 world frame 기준으로 병합합니다.
+
+| Top view | Front view | Side view |
+|---|---|---|
+| ![World point cloud top](docs/images/world_point_cloud_top.png) | ![World point cloud front](docs/images/world_point_cloud_front.png) | ![World point cloud side](docs/images/world_point_cloud_side.png) |
 **rqt_graph — 노드 연결 구조**
 
 ![rqt graph](docs/images/rqt_graph_qwen_sub_v2.png)
