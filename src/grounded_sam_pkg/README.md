@@ -184,6 +184,4 @@ ros2 launch grounded_sam_pkg grounded_sam.launch.py \
 
 ## 주의사항
 
-- CPU 추론 시 프레임당 **30~40초** 소요 (SAM ViT-B + GroundingDINO SwinT 기준).
-- `launch_env.bash` 를 먼저 `source` 하지 않으면 `ModuleNotFoundError: torch / groundingdino` 발생.
 - Gazebo bridge는 VOLATILE QoS로 발행 — `grounded_sam_node` 구독도 VOLATILE(depth=10) 사용.

@@ -113,3 +113,14 @@ ros2 launch mask_projection_pkg multi_view_projector.launch.py \
 **타임스탬프 동기화를 안 쓰는 이유**: GSAM CPU 추론 30~40초 소요 → mask_image 도착 시 depth 큐가 한참 앞으로 나가 ApproximateTimeSynchronizer 매칭 실패. depth/camera_info를 최신값으로 캐시하고 mask_image 수신을 트리거로 사용.
 
 **FREE vs UNKNOWN**: octomap_server는 ray casting으로 자유공간 계산. FREE 포인트를 pointcloud에 포함하면 배경이 occupied voxel로 마킹됨 — OBSTACLE + UNKNOWN만 octomap에 넣는 것을 권장.
+
+---
+
+## 향후 계획
+
+| 작업 | 위치 | 내용 |
+|---|---|---|
+| **Qwen VLM 연동** | `label_mapper.py` | `MASK_VALUE_TO_CATEGORY`를 Qwen 출력의 `label` 필드 기반 딕셔너리로 교체. `detections`에 `"category"` 필드 있으면 자동 우선 적용됨 |
+| **MoveIt2 연동** | downstream | `/world_map_result` TARGET centroid → goal pose, OBSTACLE/UNKNOWN → 충돌 맵 |
+| **Isaac Sim 전환** | `config/camera_extrinsics_isaac.yaml` | USD stage 카메라 World Transform 4×4 → 좌상단 3×3=R, 우상단=t 로 YAML 작성 후 `extrinsics_config` 인자로 지정 |
+| **ApproximateTimeSynchronizer** | `multi_view_projector_node.py` | Isaac Sim GPU 추론으로 전환 시 cache 패턴 → timestamp sync로 교체 |
