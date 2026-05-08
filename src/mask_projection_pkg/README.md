@@ -13,6 +13,29 @@
 
 ---
 
+## 모듈 구성
+
+```
+mask_projection_pkg/
+├── multi_view_projector_node.py  ROS 2 노드 — 구독/발행 배선 + 메시지 디코딩만
+├── projector_node.py             단일 카메라 Gazebo 데모 레퍼런스 (수정 금지)
+├── projection_engine.py          순수 numpy 투영·필터 로직 (ROS 의존성 없음)
+│     load_extrinsics / project_labeled / project_unknown
+│     collect_seg_points / filter_free_by_unknown
+├── ply_utils.py                  PLY 저장 + result JSON 공통 유틸
+│     save_ply_xyz / save_ply_labeled / build_result_json
+├── cloud_builder.py              CategoryPoints → PointCloud2 메시지 변환
+├── label_mapper.py               카테고리 ID / 색상 / mask 픽셀 매핑 (변경 금지)
+└── back_projection.py            depth 이미지 → 3D 포인트 역투영
+config/
+└── camera_extrinsics.yaml        카메라 외부 파라미터 (R, t)
+launch/
+├── multi_view_projector.launch.py
+└── mask_projector.launch.py      (Gazebo 데모용, 수정 금지)
+```
+
+---
+
 ## 카테고리
 
 | ID | 이름 | 색상 | 출처 |

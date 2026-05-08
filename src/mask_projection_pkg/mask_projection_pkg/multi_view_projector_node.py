@@ -4,57 +4,28 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import numpy as np
 import rclpy
-import yaml
-from scipy.spatial import KDTree
 from ament_index_python.packages import get_package_share_directory
 from cv_bridge import CvBridge
 from rclpy.node import Node
 from sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from std_msgs.msg import Header, String
 
-from .back_projection import depth_to_points
 from .cloud_builder import build_pointcloud2
-from .label_mapper import (
-    CATEGORY_COLOR,
-    CATEGORY_FREE,
-    CATEGORY_TARGET,
-    CATEGORY_UNKNOWN,
-    CATEGORY_WORKSPACE,
-    CategoryPoints,
-    apply_labels,
+from .label_mapper import CategoryPoints
+from .ply_utils import build_result_json, save_ply_labeled
+from .projection_engine import (
+    collect_seg_points,
+    filter_free_by_unknown,
+    load_extrinsics,
+    project_labeled,
+    project_unknown,
 )
 
 _OUTPUT_DIR = Path.home() / "gsam_ws" / "output"
-
-
-def _load_extrinsics(
-    path: str,
-    logger,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Load camera extrinsics from YAML.  Returns (R_top, t_top, R_ee, t_ee).
-    Falls back to identity / zeros on any error so the node still starts.
-    """
-    try:
-        with open(path, 'r') as f:
-            cfg = yaml.safe_load(f)
-        R_top = np.array(cfg['top_camera']['R'], dtype=np.float64)
-        t_top = np.array(cfg['top_camera']['t'], dtype=np.float64)
-        R_ee  = np.array(cfg['ee_camera']['R'],  dtype=np.float64)
-        t_ee  = np.array(cfg['ee_camera']['t'],  dtype=np.float64)
-        assert R_top.shape == (3, 3) and t_top.shape == (3,)
-        assert R_ee.shape  == (3, 3) and t_ee.shape  == (3,)
-        logger.info(f'Loaded camera extrinsics from {path}')
-        return R_top, t_top, R_ee, t_ee
-    except Exception as exc:
-        logger.warn(
-            f'Failed to load extrinsics from "{path}": {exc}. '
-            'Using identity transforms — point cloud will be in camera frame.'
-        )
-        return np.eye(3), np.zeros(3), np.eye(3), np.zeros(3)
 
 
 class MultiViewProjectorNode(Node):
@@ -107,7 +78,14 @@ class MultiViewProjectorNode(Node):
 
         # ── camera extrinsics (loaded from YAML) ──────────────────────────────
         (self._R_TOP, self._t_TOP,
-         self._R_EE,  self._t_EE) = _load_extrinsics(extrinsics_path, self.get_logger())
+         self._R_EE,  self._t_EE, _ext_warn) = load_extrinsics(extrinsics_path)
+        if _ext_warn:
+            self.get_logger().warn(
+                f'Failed to load extrinsics from "{extrinsics_path}": {_ext_warn}. '
+                'Using identity transforms — point cloud will be in camera frame.'
+            )
+        else:
+            self.get_logger().info(f'Loaded camera extrinsics from {extrinsics_path}')
 
         # ── cache ─────────────────────────────────────────────────────────────
         self._bridge = CvBridge()
@@ -184,7 +162,7 @@ class MultiViewProjectorNode(Node):
         # ── Top camera view — Pass 1: remove UNKNOWN near EE seg (XY + Z gate) ──
         top_pts: Optional[CategoryPoints] = None
         if self._top_depth is not None and self._top_info is not None:
-            ee_seg_pts = _collect_seg_points(ee_pts)
+            ee_seg_pts = collect_seg_points(ee_pts)
             top_pts = self._project_unknown(
                 self._top_depth, self._top_info,
                 self._R_TOP, self._t_TOP,
@@ -200,7 +178,7 @@ class MultiViewProjectorNode(Node):
 
         # ── Pass 2: UNKNOWN > FREE — remove EE FREE near top UNKNOWN ─────────
         if top_pts is not None:
-            ee_pts = _filter_free_by_unknown(
+            ee_pts = filter_free_by_unknown(
                 ee_pts, top_pts,
                 self._free_unknown_xy_radius,
                 self._free_unknown_z_margin,
@@ -226,17 +204,17 @@ class MultiViewProjectorNode(Node):
 
         # ── publish ───────────────────────────────────────────────────────────
         self._pub_cloud.publish(build_pointcloud2(header, all_category_points))
-        self._pub_result.publish(String(data=_build_result_json(all_category_points)))
+        self._pub_result.publish(String(data=build_result_json(all_category_points)))
 
         # ── save PLY to disk ──────────────────────────────────────────────────
         stamp  = self._ee_depth.header.stamp.sec
         prefix = f"{self._initials}_" if self._initials else ""
-        _save_ply_labeled(
+        save_ply_labeled(
             _OUTPUT_DIR / f"world_map_{prefix}{stamp}.ply",
             all_category_points,
         )
 
-    # ── projection helpers ────────────────────────────────────────────────────
+    # ── projection helpers (ROS decode → engine call) ─────────────────────────
 
     def _project_unknown(
         self,
@@ -248,32 +226,13 @@ class MultiViewProjectorNode(Node):
         ee_seg_filter_radius:  float = 0.015,
         ee_seg_z_margin:       float = 0.10,
     ) -> Optional[CategoryPoints]:
-        """Back-project top-view depth → UNKNOWN.
-        Pass 1: remove points within ee_seg_filter_radius (XY) AND ee_seg_z_margin (Z)
-        of any EE-segmented point. Z gate prevents floor points from being removed
-        by the XY footprint of objects above them (e.g. table at Z=1 m)."""
         depth = self._bridge.imgmsg_to_cv2(depth_msg, desired_encoding='32FC1')
         K     = np.array(info_msg.k, dtype=np.float64).reshape(3, 3)
-
-        pts_cam, _ = depth_to_points(depth, K,
-                                     min_depth=self._min_depth,
-                                     max_depth=self._max_depth)
-        if len(pts_cam) == 0:
-            return None
-
-        pts_world = (R @ pts_cam.T).T + t
-
-        if ee_seg_pts is not None and len(ee_seg_pts) > 0:
-            tree = KDTree(ee_seg_pts[:, :2])
-            dists, idx = tree.query(pts_world[:, :2], workers=-1)
-            z_diff = np.abs(pts_world[:, 2] - ee_seg_pts[idx, 2])
-            remove = (dists <= ee_seg_filter_radius) & (z_diff <= ee_seg_z_margin)
-            pts_world = pts_world[~remove]
-
-        if len(pts_world) == 0:
-            return None
-
-        return _make_unknown_points(pts_world)
+        return project_unknown(
+            depth, K, R, t,
+            self._min_depth, self._max_depth,
+            ee_seg_pts, ee_seg_filter_radius, ee_seg_z_margin,
+        )
 
     def _project_labeled(
         self,
@@ -281,148 +240,14 @@ class MultiViewProjectorNode(Node):
         info_msg:   CameraInfo,
         mask_msg:   Image,
         detections: List[Dict],
-        R: np.ndarray,
-        t: np.ndarray,
+        R:          np.ndarray,
+        t:          np.ndarray,
     ) -> List[CategoryPoints]:
-        """Back-project EE depth, transform to world, apply GSAM labels."""
         depth = self._bridge.imgmsg_to_cv2(depth_msg, desired_encoding='32FC1')
         mask  = self._bridge.imgmsg_to_cv2(mask_msg,  desired_encoding='mono8')
         K     = np.array(info_msg.k, dtype=np.float64).reshape(3, 3)
-
-        # NOTE: pixel_coords are at depth image resolution.
-        # apply_labels indexes mask_image (built at RGB resolution by GSAM) using
-        # those coords.  If depth and RGB resolutions differ, add a resize step here.
-        # Standard RGBD sensors produce equal resolutions → no resize needed.
-        pts_cam, pixel_coords = depth_to_points(depth, K,
-                                                min_depth=self._min_depth,
-                                                max_depth=self._max_depth)
-        if len(pts_cam) == 0:
-            return []
-
-        pts_world = (R @ pts_cam.T).T + t
-        return apply_labels(pts_world, pixel_coords, mask, detections)
-
-
-# ── module-level helpers ──────────────────────────────────────────────────────
-
-def _collect_seg_points(category_points: List[CategoryPoints]) -> Optional[np.ndarray]:
-    """EE CategoryPoints에서 FREE 제외한 seg 포인트 (N,3) 반환."""
-    seg = [cp.points for cp in category_points if cp.category != CATEGORY_FREE]
-    if not seg:
-        return None
-    return np.concatenate(seg, axis=0)
-
-
-def _filter_free_by_unknown(
-    ee_pts:    List[CategoryPoints],
-    top_unknown: CategoryPoints,
-    xy_radius: float,
-    z_margin:  float,
-) -> List[CategoryPoints]:
-    """Pass 2: EE FREE 포인트 중 top UNKNOWN과 XY+Z 범위 내에 있는 것 제거.
-    UNKNOWN > FREE 우선순위. top_unknown은 Pass 1 완료 후 포인트여야 함."""
-    if len(top_unknown.points) == 0:
-        return ee_pts
-
-    tree = KDTree(top_unknown.points[:, :2])
-    result: List[CategoryPoints] = []
-    for cp in ee_pts:
-        if cp.category != CATEGORY_FREE:
-            result.append(cp)
-            continue
-        dists, idx = tree.query(cp.points[:, :2], workers=-1)
-        z_diff = np.abs(cp.points[:, 2] - top_unknown.points[idx, 2])
-        keep = ~((dists <= xy_radius) & (z_diff <= z_margin))
-        if keep.any():
-            result.append(CategoryPoints(
-                label=cp.label,
-                category=cp.category,
-                points=cp.points[keep],
-                colors=cp.colors[keep],
-                categories=cp.categories[keep],
-            ))
-    return result
-
-
-def _make_unknown_points(points: np.ndarray) -> CategoryPoints:
-    """Wrap an (N, 3) world-frame array as UNKNOWN CategoryPoints (top-view geometry)."""
-    n     = len(points)
-    color = CATEGORY_COLOR[CATEGORY_UNKNOWN]
-    return CategoryPoints(
-        label      = 'unknown',
-        category   = CATEGORY_UNKNOWN,
-        points     = points.astype(np.float32),
-        colors     = np.tile(np.array(color, dtype=np.uint8), (n, 1)),
-        categories = np.full(n, CATEGORY_UNKNOWN, dtype=np.uint8),
-    )
-
-
-
-def _build_result_json(category_points: List[CategoryPoints]) -> str:
-    """
-    JSON summary per category: label, centroid, bbox_3d_world, point_count.
-
-    {
-      "target":    {"label": "cup",   "centroid": [x,y,z],
-                    "bbox_3d_world": {"min": [x,y,z], "max": [x,y,z]},
-                    "point_count": N},
-      "workspace": { ... },
-      ...
-    }
-    """
-    _CATEGORY_KEY = {
-        CATEGORY_TARGET:    'target',
-        CATEGORY_WORKSPACE: 'workspace',
-    }
-    out: Dict = {}
-    for cp in category_points:
-        key      = _CATEGORY_KEY.get(cp.category, cp.label)
-        centroid = cp.points.mean(axis=0).tolist()
-        pts_min  = cp.points.min(axis=0).tolist()
-        pts_max  = cp.points.max(axis=0).tolist()
-        out[key] = {
-            'label':         cp.label,
-            'centroid':      [round(v, 4) for v in centroid],
-            'bbox_3d_world': {
-                'min': [round(v, 4) for v in pts_min],
-                'max': [round(v, 4) for v in pts_max],
-            },
-            'point_count':   len(cp.points),
-        }
-    return json.dumps(out)
-
-
-def _save_ply_labeled(path: Path, category_points: List[CategoryPoints]) -> None:
-    """Save world-frame labeled points (XYZ + RGB + category) as PLY."""
-    all_pts  = np.concatenate([cp.points     for cp in category_points], axis=0)
-    all_col  = np.concatenate([cp.colors     for cp in category_points], axis=0)
-    all_cats = np.concatenate([cp.categories for cp in category_points], axis=0)
-    N = len(all_pts)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    dt = np.dtype([
-        ('x', np.float32), ('y', np.float32), ('z', np.float32),
-        ('red', np.uint8), ('green', np.uint8), ('blue', np.uint8),
-        ('category', np.uint8),
-    ])
-    arr             = np.zeros(N, dtype=dt)
-    arr['x']        = all_pts[:, 0]
-    arr['y']        = all_pts[:, 1]
-    arr['z']        = all_pts[:, 2]
-    arr['red']      = all_col[:, 0]
-    arr['green']    = all_col[:, 1]
-    arr['blue']     = all_col[:, 2]
-    arr['category'] = all_cats
-    header = (
-        "ply\nformat binary_little_endian 1.0\n"
-        f"element vertex {N}\n"
-        "property float x\nproperty float y\nproperty float z\n"
-        "property uchar red\nproperty uchar green\nproperty uchar blue\n"
-        "property uchar category\n"
-        "end_header\n"
-    )
-    with open(path, 'wb') as f:
-        f.write(header.encode())
-        f.write(arr.tobytes())
+        return project_labeled(depth, K, mask, detections, R, t,
+                               self._min_depth, self._max_depth)
 
 
 def main(args=None) -> None:
