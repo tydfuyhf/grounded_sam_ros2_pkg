@@ -74,7 +74,10 @@ class MultiViewProjectorNode(Node):
         self.declare_parameter('initials',               '')
         self.declare_parameter('min_depth', 0.05)
         self.declare_parameter('max_depth', 15.0)
-        self.declare_parameter('ee_seg_filter_radius', 0.015)  # metres — XY footprint radius
+        self.declare_parameter('ee_seg_filter_radius',    0.015)  # metres — XY footprint radius
+        self.declare_parameter('ee_seg_z_margin',         0.10)   # metres — Z gate for seg filter
+        self.declare_parameter('free_unknown_xy_radius',  0.05)   # metres — Pass 2 XY radius
+        self.declare_parameter('free_unknown_z_margin',   0.10)   # metres — Pass 2 Z gate
 
         _default_extrinsics = os.path.join(
             get_package_share_directory('mask_projection_pkg'),
@@ -92,8 +95,11 @@ class MultiViewProjectorNode(Node):
         output_result_topic    = self.get_parameter('output_result_topic').value
         self._min_depth        = self.get_parameter('min_depth').value
         self._max_depth        = self.get_parameter('max_depth').value
-        self._ee_seg_filter_radius = self.get_parameter('ee_seg_filter_radius').value
-        self._initials         = self.get_parameter('initials').value
+        self._ee_seg_filter_radius    = self.get_parameter('ee_seg_filter_radius').value
+        self._ee_seg_z_margin         = self.get_parameter('ee_seg_z_margin').value
+        self._free_unknown_xy_radius  = self.get_parameter('free_unknown_xy_radius').value
+        self._free_unknown_z_margin   = self.get_parameter('free_unknown_z_margin').value
+        self._initials                = self.get_parameter('initials').value
         extrinsics_path        = self.get_parameter('extrinsics_config').value
         # launch file may pass '' (empty string) → fall back to package default
         if not extrinsics_path:
@@ -169,28 +175,41 @@ class MultiViewProjectorNode(Node):
 
         all_category_points: List[CategoryPoints] = []
 
-        # ── EE camera view first (seg footprint needed before top-view filtering) ──
+        # ── EE camera view ────────────────────────────────────────────────────
         ee_pts = self._project_labeled(
             self._ee_depth, self._ee_info, mask_msg,
             self._latest_detections, self._R_EE, self._t_EE,
         )
-        if ee_pts:
-            all_category_points.extend(ee_pts)
 
-        # ── Top camera view (depth only → UNKNOWN, EE seg footprint 제외) ────────
+        # ── Top camera view — Pass 1: remove UNKNOWN near EE seg (XY + Z gate) ──
+        top_pts: Optional[CategoryPoints] = None
         if self._top_depth is not None and self._top_info is not None:
             ee_seg_pts = _collect_seg_points(ee_pts)
-            top_pts = self._project_unknown(self._top_depth, self._top_info,
-                                            self._R_TOP, self._t_TOP,
-                                            ee_seg_pts=ee_seg_pts,
-                                            ee_seg_filter_radius=self._ee_seg_filter_radius)
-            if top_pts is not None:
-                all_category_points.append(top_pts)
+            top_pts = self._project_unknown(
+                self._top_depth, self._top_info,
+                self._R_TOP, self._t_TOP,
+                ee_seg_pts=ee_seg_pts,
+                ee_seg_filter_radius=self._ee_seg_filter_radius,
+                ee_seg_z_margin=self._ee_seg_z_margin,
+            )
         else:
             self.get_logger().warn(
                 'Top camera not available — publishing EE view only. '
                 'Check top_depth_topic / top_camera_info_topic parameters.'
             )
+
+        # ── Pass 2: UNKNOWN > FREE — remove EE FREE near top UNKNOWN ─────────
+        if top_pts is not None:
+            ee_pts = _filter_free_by_unknown(
+                ee_pts, top_pts,
+                self._free_unknown_xy_radius,
+                self._free_unknown_z_margin,
+            )
+
+        if ee_pts:
+            all_category_points.extend(ee_pts)
+        if top_pts is not None:
+            all_category_points.append(top_pts)
 
         if not all_category_points:
             self.get_logger().warn('No valid points from either camera.')
@@ -227,9 +246,12 @@ class MultiViewProjectorNode(Node):
         t:                     np.ndarray,
         ee_seg_pts:            Optional[np.ndarray] = None,
         ee_seg_filter_radius:  float = 0.015,
+        ee_seg_z_margin:       float = 0.10,
     ) -> Optional[CategoryPoints]:
-        """Back-project top-view depth → UNKNOWN, removing points within
-        ee_seg_filter_radius (XY plane) of any EE-segmented point."""
+        """Back-project top-view depth → UNKNOWN.
+        Pass 1: remove points within ee_seg_filter_radius (XY) AND ee_seg_z_margin (Z)
+        of any EE-segmented point. Z gate prevents floor points from being removed
+        by the XY footprint of objects above them (e.g. table at Z=1 m)."""
         depth = self._bridge.imgmsg_to_cv2(depth_msg, desired_encoding='32FC1')
         K     = np.array(info_msg.k, dtype=np.float64).reshape(3, 3)
 
@@ -242,9 +264,11 @@ class MultiViewProjectorNode(Node):
         pts_world = (R @ pts_cam.T).T + t
 
         if ee_seg_pts is not None and len(ee_seg_pts) > 0:
-            tree  = KDTree(ee_seg_pts[:, :2])
-            dists, _ = tree.query(pts_world[:, :2], workers=-1)
-            pts_world = pts_world[dists > ee_seg_filter_radius]
+            tree = KDTree(ee_seg_pts[:, :2])
+            dists, idx = tree.query(pts_world[:, :2], workers=-1)
+            z_diff = np.abs(pts_world[:, 2] - ee_seg_pts[idx, 2])
+            remove = (dists <= ee_seg_filter_radius) & (z_diff <= ee_seg_z_margin)
+            pts_world = pts_world[~remove]
 
         if len(pts_world) == 0:
             return None
@@ -282,11 +306,42 @@ class MultiViewProjectorNode(Node):
 # ── module-level helpers ──────────────────────────────────────────────────────
 
 def _collect_seg_points(category_points: List[CategoryPoints]) -> Optional[np.ndarray]:
-    """EE CategoryPoints에서 FREE 제외한 seg 포인트 XY만 모아 (N,2) 반환."""
+    """EE CategoryPoints에서 FREE 제외한 seg 포인트 (N,3) 반환."""
     seg = [cp.points for cp in category_points if cp.category != CATEGORY_FREE]
     if not seg:
         return None
     return np.concatenate(seg, axis=0)
+
+
+def _filter_free_by_unknown(
+    ee_pts:    List[CategoryPoints],
+    top_unknown: CategoryPoints,
+    xy_radius: float,
+    z_margin:  float,
+) -> List[CategoryPoints]:
+    """Pass 2: EE FREE 포인트 중 top UNKNOWN과 XY+Z 범위 내에 있는 것 제거.
+    UNKNOWN > FREE 우선순위. top_unknown은 Pass 1 완료 후 포인트여야 함."""
+    if len(top_unknown.points) == 0:
+        return ee_pts
+
+    tree = KDTree(top_unknown.points[:, :2])
+    result: List[CategoryPoints] = []
+    for cp in ee_pts:
+        if cp.category != CATEGORY_FREE:
+            result.append(cp)
+            continue
+        dists, idx = tree.query(cp.points[:, :2], workers=-1)
+        z_diff = np.abs(cp.points[:, 2] - top_unknown.points[idx, 2])
+        keep = ~((dists <= xy_radius) & (z_diff <= z_margin))
+        if keep.any():
+            result.append(CategoryPoints(
+                label=cp.label,
+                category=cp.category,
+                points=cp.points[keep],
+                colors=cp.colors[keep],
+                categories=cp.categories[keep],
+            ))
+    return result
 
 
 def _make_unknown_points(points: np.ndarray) -> CategoryPoints:
