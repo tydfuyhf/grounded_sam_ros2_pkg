@@ -6,10 +6,10 @@ Panels:
       Expanded:
         - /WorldMap1
         - /GraspMarkers1
-        - /Image1
-        - /Image2
-      Splitter Ratio: 0.35
-    Tree Height: 700
+        - /EECamera1
+        - /GSAMAnnotated1
+      Splitter Ratio: 0.38
+    Tree Height: 780
   - Class: rviz_common/Views
     Expanded:
       - /Current View1
@@ -48,9 +48,9 @@ Visualization Manager:
         Durability Policy: Volatile
         Filter size: 10
         History Policy: Keep Last
-        Reliability Policy: Reliable
+        Reliability Policy: Best Effort
         Value: /world_map
-      Unreliable: false
+      Unreliable: true
       Use Fixed Frame: true
       Use rainbow: false
       Value: true
@@ -74,7 +74,7 @@ Visualization Manager:
       Max Value: 1
       Median window: 5
       Min Value: 0
-      Name: EE Camera (RGB)
+      Name: EECamera
       Normalize Range: true
       Queue Size: 10
       Topic:
@@ -91,7 +91,7 @@ Visualization Manager:
       Max Value: 1
       Median window: 5
       Min Value: 0
-      Name: GSAM Annotated
+      Name: GSAMAnnotated
       Normalize Range: true
       Queue Size: 10
       Topic:
@@ -105,7 +105,7 @@ Visualization Manager:
       Value: true
   Enabled: true
   Global Options:
-    Background Color: 48; 48; 48
+    Background Color: 30; 30; 30
     Fixed Frame: world
     Frame Rate: 30
   Name: root
@@ -140,7 +140,7 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.01
-      Pitch: 0.3
+      Pitch: 0.55
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
       Yaw: 3.14
@@ -151,9 +151,9 @@ Window Geometry:
   Height: 900
   Hide Left Dock: false
   Hide Right Dock: false
-  EE Camera (RGB):
+  EECamera:
     collapsed: false
-  GSAM Annotated:
+  GSAMAnnotated:
     collapsed: false
   Width: 1400
   X: 0

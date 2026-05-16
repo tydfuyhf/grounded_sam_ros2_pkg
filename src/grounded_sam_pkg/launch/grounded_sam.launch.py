@@ -27,14 +27,20 @@ def generate_launch_description():
             default_value="/ee_camera/image",
             description="Image topic to subscribe to",
         ),
+        DeclareLaunchArgument(
+            "process_once",
+            default_value="false",
+            description="첫 탐지 성공 후 구독 해제 (데모용)",
+        ),
         Node(
             package="grounded_sam_pkg",
             executable="grounded_sam_node",
             name="grounded_sam_node",
             parameters=[{
-                "model_config": LaunchConfiguration("model_config"),
-                "prompt": LaunchConfiguration("prompt"),
-                "image_topic": LaunchConfiguration("image_topic"),
+                "model_config":  LaunchConfiguration("model_config"),
+                "prompt":        LaunchConfiguration("prompt"),
+                "image_topic":   LaunchConfiguration("image_topic"),
+                "process_once":  LaunchConfiguration("process_once"),
             }],
             output="screen",
         ),

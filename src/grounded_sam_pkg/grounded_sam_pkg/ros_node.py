@@ -30,10 +30,13 @@ class GroundedSAMNode(Node):
         self.declare_parameter("model_config", "")
         self.declare_parameter("prompt", "object")
         self.declare_parameter("image_topic", "/camera/image_raw")
+        self.declare_parameter("process_once", False)
 
         model_config = self.get_parameter("model_config").value
         self.prompt_raw = self.get_parameter("prompt").value
         image_topic = self.get_parameter("image_topic").value
+        self._process_once = self.get_parameter("process_once").value
+        self._done = False
 
         if not model_config:
             raise ValueError("Parameter 'model_config' must be set to the path of model_paths.yaml")
@@ -62,6 +65,9 @@ class GroundedSAMNode(Node):
         )
 
     def _image_callback(self, msg: Image) -> None:
+        if self._done:
+            return
+
         image_bgr = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
         prompt = self.adapter.adapt(self.prompt_raw)
 
@@ -111,6 +117,11 @@ class GroundedSAMNode(Node):
         filename = f"result_{initials}.jpg"
         save_result(vis, OUTPUT_DIR / filename)
         self.get_logger().info(f"Saved → {OUTPUT_DIR / filename}")
+
+        if self._process_once and det_list:
+            self._done = True
+            self.destroy_subscription(self.subscription)
+            self.get_logger().info("process_once=True: 첫 탐지 완료, 구독 해제")
 
 
 def main(args=None):

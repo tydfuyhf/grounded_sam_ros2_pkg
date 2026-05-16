@@ -4,3 +4,6 @@
 [submodule "external/segment-anything"]
 	path = external/segment-anything
 	url = https://github.com/facebookresearch/segment-anything.git
+[submodule "external/vgn"]
+	path = external/vgn
+	url = https://github.com/ethz-asl/vgn
