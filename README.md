@@ -25,6 +25,14 @@ Top / Front / Side view에서 확인한 `/world_map` 결과입니다.
 |---|---|---|
 | ![World point cloud top](docs/images/world_point_cloud_top2.png) | ![World point cloud front](docs/images/world_point_cloud_front2.png) | ![World point cloud side](docs/images/world_point_cloud_side2.png) |
 
+**VGN — grasp 후보 출력 (`/grasp_markers`)**
+
+| View 1 | View 2 |
+|---|---|
+| ![VGN view 1](docs/images/vgn_view1.png) | ![VGN view 2](docs/images/vgn_view2.png) |
+
+파란 화살표 = grasp approach 방향 (꼬리→화살촉), 밝을수록 quality 높음.
+
 **rqt_graph — 노드 연결 구조**
 
 ![rqt graph](docs/images/rqt_graph_qwen_sub_v2.png)
