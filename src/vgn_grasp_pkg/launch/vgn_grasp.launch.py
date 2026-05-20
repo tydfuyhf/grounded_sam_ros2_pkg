@@ -16,7 +16,9 @@ Override example:
   ros2 launch vgn_grasp_pkg vgn_grasp.launch.py \
     vgn_model_path:=/abs/path/to/model.pt \
     min_quality:=0.4 \
-    max_candidates:=3
+    max_candidates:=3 \
+    use_top_depth:=false \
+    extrinsics_config:=/path/to/camera_extrinsics_isaac.yaml
 """
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
@@ -33,10 +35,14 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('min_quality',            default_value='0.5'),
         DeclareLaunchArgument('max_candidates',         default_value='5'),
         DeclareLaunchArgument('min_point_count',        default_value='50'),
-        DeclareLaunchArgument('semantic_filter_radius', default_value='0.05'),
-        DeclareLaunchArgument('world_map_topic',        default_value='/world_map'),
+        DeclareLaunchArgument('ee_depth_topic',         default_value='/ee_camera/depth_image'),
+        DeclareLaunchArgument('ee_camera_info_topic',   default_value='/ee_camera/camera_info'),
+        DeclareLaunchArgument('top_depth_topic',        default_value='/top_camera/depth_image'),
+        DeclareLaunchArgument('top_camera_info_topic',  default_value='/top_camera/camera_info'),
         DeclareLaunchArgument('world_map_result_topic', default_value='/world_map_result'),
         DeclareLaunchArgument('grasp_candidates_topic', default_value='/grasp_candidates'),
+        DeclareLaunchArgument('extrinsics_config',      default_value=''),
+        DeclareLaunchArgument('use_top_depth',          default_value='true'),
         DeclareLaunchArgument('world_frame',            default_value='world'),
         DeclareLaunchArgument('robot_frame',            default_value='panda_link0'),
     ]
@@ -53,10 +59,14 @@ def generate_launch_description() -> LaunchDescription:
             'min_quality':            LaunchConfiguration('min_quality'),
             'max_candidates':         LaunchConfiguration('max_candidates'),
             'min_point_count':        LaunchConfiguration('min_point_count'),
-            'semantic_filter_radius': LaunchConfiguration('semantic_filter_radius'),
-            'world_map_topic':        LaunchConfiguration('world_map_topic'),
+            'ee_depth_topic':         LaunchConfiguration('ee_depth_topic'),
+            'ee_camera_info_topic':   LaunchConfiguration('ee_camera_info_topic'),
+            'top_depth_topic':        LaunchConfiguration('top_depth_topic'),
+            'top_camera_info_topic':  LaunchConfiguration('top_camera_info_topic'),
             'world_map_result_topic': LaunchConfiguration('world_map_result_topic'),
             'grasp_candidates_topic': LaunchConfiguration('grasp_candidates_topic'),
+            'extrinsics_config':      LaunchConfiguration('extrinsics_config'),
+            'use_top_depth':          LaunchConfiguration('use_top_depth'),
             'world_frame':            LaunchConfiguration('world_frame'),
             'robot_frame':            LaunchConfiguration('robot_frame'),
         }],
