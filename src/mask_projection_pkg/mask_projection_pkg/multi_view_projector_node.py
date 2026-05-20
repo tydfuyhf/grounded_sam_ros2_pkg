@@ -11,7 +11,7 @@ import rclpy
 from ament_index_python.packages import get_package_share_directory
 from cv_bridge import CvBridge
 from rclpy.node import Node
-from sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from sensor_msgs.msg import CameraInfo, Image, PointCloud2, PointField
 from std_msgs.msg import Header, String
 
 from .cloud_builder import build_pointcloud2
@@ -42,6 +42,7 @@ class MultiViewProjectorNode(Node):
         self.declare_parameter('detections_topic',       '/grounded_sam/detections_json')
         self.declare_parameter('output_cloud_topic',     '/world_map')
         self.declare_parameter('output_result_topic',    '/world_map_result')
+        self.declare_parameter('output_raw_cloud_topic', '/world_cloud_raw')
         self.declare_parameter('initials',               '')
         self.declare_parameter('min_depth', 0.05)
         self.declare_parameter('max_depth', 15.0)
@@ -64,6 +65,7 @@ class MultiViewProjectorNode(Node):
         detections_topic       = self.get_parameter('detections_topic').value
         output_cloud_topic     = self.get_parameter('output_cloud_topic').value
         output_result_topic    = self.get_parameter('output_result_topic').value
+        output_raw_cloud_topic = self.get_parameter('output_raw_cloud_topic').value
         self._min_depth        = self.get_parameter('min_depth').value
         self._max_depth        = self.get_parameter('max_depth').value
         self._ee_seg_filter_radius    = self.get_parameter('ee_seg_filter_radius').value
@@ -110,8 +112,9 @@ class MultiViewProjectorNode(Node):
         self.create_subscription(Image,      mask_topic,            self._mask_cb,       10)
 
         # ── publishers ────────────────────────────────────────────────────────
-        self._pub_cloud  = self.create_publisher(PointCloud2, output_cloud_topic,  10)
-        self._pub_result = self.create_publisher(String,      output_result_topic, 10)
+        self._pub_cloud     = self.create_publisher(PointCloud2, output_cloud_topic,     10)
+        self._pub_result    = self.create_publisher(String,      output_result_topic,    10)
+        self._pub_raw_cloud = self.create_publisher(PointCloud2, output_raw_cloud_topic, 10)
 
         self.get_logger().info(
             f'MultiViewProjectorNode ready — '
@@ -205,6 +208,7 @@ class MultiViewProjectorNode(Node):
         # ── publish ───────────────────────────────────────────────────────────
         self._pub_cloud.publish(build_pointcloud2(header, all_category_points))
         self._pub_result.publish(String(data=build_result_json(all_category_points)))
+        self._pub_raw_cloud.publish(self._build_raw_cloud(header, all_category_points))
 
         # ── save PLY to disk ──────────────────────────────────────────────────
         stamp  = self._ee_depth.header.stamp.sec
@@ -233,6 +237,43 @@ class MultiViewProjectorNode(Node):
             self._min_depth, self._max_depth,
             ee_seg_pts, ee_seg_filter_radius, ee_seg_z_margin,
         )
+
+    def _build_raw_cloud(
+        self,
+        header,
+        category_points: List[CategoryPoints],
+    ) -> PointCloud2:
+        """Build geometry-only (x, y, z) PointCloud2 for MoveIt2 OctoMap input.
+
+        Strips rgb and category fields from /world_map so the MoveIt2 team
+        can feed it directly into move_group's octomap_server without any
+        field-name conflicts.
+        """
+        all_pts = np.concatenate([cp.points for cp in category_points], axis=0).astype(np.float32)
+        N = len(all_pts)
+
+        dt = np.dtype([('x', np.float32), ('y', np.float32), ('z', np.float32)])
+        arr = np.zeros(N, dtype=dt)
+        arr['x'] = all_pts[:, 0]
+        arr['y'] = all_pts[:, 1]
+        arr['z'] = all_pts[:, 2]
+
+        fields = [
+            PointField(name='x', offset=0,  datatype=PointField.FLOAT32, count=1),
+            PointField(name='y', offset=4,  datatype=PointField.FLOAT32, count=1),
+            PointField(name='z', offset=8,  datatype=PointField.FLOAT32, count=1),
+        ]
+        msg              = PointCloud2()
+        msg.header       = header
+        msg.height       = 1
+        msg.width        = N
+        msg.fields       = fields
+        msg.is_bigendian = False
+        msg.point_step   = 12
+        msg.row_step     = 12 * N
+        msg.is_dense     = True
+        msg.data         = arr.tobytes()
+        return msg
 
     def _project_labeled(
         self,

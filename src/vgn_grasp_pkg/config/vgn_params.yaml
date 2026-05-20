@@ -18,14 +18,20 @@ vgn_grasp_node:
     # Skip trigger if TARGET point_count is below this
     min_point_count: 50
 
-    # Max distance (m) from TARGET surface to accept a grasp candidate
-    semantic_filter_radius: 0.05
+    # Depth input topics (K from camera_info, R/t from extrinsics_config)
+    ee_depth_topic: "/ee_camera/depth_image"
+    ee_camera_info_topic: "/ee_camera/camera_info"
+    top_depth_topic: "/top_camera/depth_image"
+    top_camera_info_topic: "/top_camera/camera_info"
 
-    # Input topics
-    world_map_topic: "/world_map"
+    # Use top camera depth for TSDF integration (set false to use EE only)
+    use_top_depth: true
+
+    # Camera extrinsics YAML (R, t only — no K). Empty = mask_projection_pkg default.
+    extrinsics_config: ""
+
+    # Trigger and output topics
     world_map_result_topic: "/world_map_result"
-
-    # Output topic
     grasp_candidates_topic: "/grasp_candidates"
 
     # TF frames

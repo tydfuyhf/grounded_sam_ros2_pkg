@@ -49,12 +49,14 @@ Gazebo (rgbd_projection)
     EE depth + 마스크  →  TARGET(초록) / WORKSPACE(노랑) / OBSTACLE(빨강) / FREE(회색)
     Top depth          →  UNKNOWN(보라), TARGET bbox 내부 제거
     두 뷰 world frame 병합
-        ├─▶ /world_map        (PointCloud2, frame_id="world")
+        ├─▶ /world_map        (PointCloud2, frame_id="world") — RViz2 시각화
+        ├─▶ /world_cloud_raw  (PointCloud2, x/y/z only) — MoveIt2 OctoMap 입력
         └─▶ /world_map_result (JSON: centroid + bbox_3d_world per category)
                 │
                 ▼
   vgn_grasp_node
-    /world_map AABB crop → KDTree TSDF → VGN inference → semantic filter
+    EE depth + Top depth → ray-casting signed TSDF (40×40×40) → VGN inference
+    시맨틱 필터: /world_map_result bbox_3d_world 기준
         ├─▶ /grasp_candidates (JSON: Top-K grasp poses)
         └─▶ /grasp_markers    (MarkerArray: RViz2 시각화)
 ```
@@ -198,6 +200,11 @@ ros2 launch mask_projection_pkg multi_view_projector.launch.py \
   top_camera_info_topic:=/isaac/top/camera_info
 
 ros2 launch vgn_grasp_pkg vgn_grasp.launch.py \
+  extrinsics_config:=/path/to/camera_extrinsics_isaac.yaml \
+  ee_depth_topic:=/isaac/ee/depth_image \
+  ee_camera_info_topic:=/isaac/ee/camera_info \
+  top_depth_topic:=/isaac/top/depth_image \
+  top_camera_info_topic:=/isaac/top/camera_info \
   robot_frame:=panda_link0
 ```
 
@@ -218,5 +225,6 @@ ros2 launch vgn_grasp_pkg vgn_grasp.launch.py \
 
 | 문제 | 원인 | 상태 |
 |---|---|---|
-| VGN grasp가 물체 내부를 관통 | KDTree unsigned SDF → VGN이 기대하는 signed TSDF와 불일치, 내부/외부 구분 불가 | 미해결 — depth image 기반 TSDF 적분으로 교체 필요 |
+| VGN grasp가 물체 내부를 관통 | KDTree unsigned SDF → VGN이 기대하는 signed TSDF와 불일치 | **해결** — depth image ray-casting signed TSDF로 교체 완료 |
+| semantic filter 정밀도 저하 가능 | GSAM이 EE 카메라에서만 실행 → TARGET bbox가 컵 앞/옆면만 커버 | 미해결 — 필터가 부정확하면 DBSCAN 클러스터링 적용 예정. `vgn_plan_final.md` 참고 |
 | GSAM annotated image가 이상하게 나옴 | EE 카메라 해상도 / Gazebo 씬에 따라 마스크 품질 차이 | 데모 환경에서는 허용 |
