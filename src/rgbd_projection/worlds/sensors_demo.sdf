@@ -174,14 +174,14 @@
 
     <!--
       EE camera (front-view, EE analog)
-      Position : x=-1, y=2, z=1.8  — in front of table, same y as cup
-      Rotation : pitch=0.360 rad (~20.6° down), yaw=π (facing –X toward table)
+      Position : x=-1.25, y=2, z=1.8  — in front of table, same y as cup
+      Rotation : pitch=0.406 rad (~23.3° down), yaw=π (facing –X toward table)
       Optical axis passes through cup centre at (-3, 2, 1.047).
       Extrinsics are managed in camera_extrinsics.yaml (mask_projection_pkg/config/).
       To adjust: change pose here AND update ee_camera section in camera_extrinsics.yaml.
     -->
     <model name="ee_camera">
-      <pose>-1 2 1.8 0 0.360 3.14159</pose>
+      <pose>-1.25 2 1.8 0 0.406 3.14159</pose>
       <static>true</static>
       <link name="link">
         <inertial>
@@ -223,15 +223,15 @@
 
     <!--
       Top camera (overhead, fixed mount above table)
-      Position : x=-3, y=2, z=3.5  — directly above table centre
+      Position : x=-3, y=2, z=2.9  — directly above table centre
       Rotation : pitch=π/2=1.5708 (straight down), yaw=0
-      Table top surface at z≈0.992 (2× scale) → camera-to-surface distance ≈ 2.5 m.
-      FOV=1.047 rad (60°) → coverage ≈ 2.9 m at 2.5 m depth (2× table fits inside).
+      Table top surface at z≈0.992 (2× scale) → camera-to-surface distance ≈ 1.91 m.
+      FOV=1.047 rad (60°) → coverage ≈ 2.20 m at 1.91 m depth.
       Extrinsics are managed in camera_extrinsics.yaml (mask_projection_pkg/config/).
       To adjust: change pose here AND update top_camera section in camera_extrinsics.yaml.
     -->
     <model name="top_camera">
-      <pose>-3 2 3.5 0 1.5708 0</pose>
+      <pose>-3 2 2.9 0 1.5708 0</pose>
       <static>true</static>
       <link name="link">
         <inertial>
@@ -305,9 +305,9 @@
       </link>
     </model>
 
-    <!-- Tea Mug: scale=0.1, placed on 2× table top (world Z=0.992 + bottom_offset=0.005) -->
+    <!-- Tea Mug: scale=0.06, placed on 2× table top (world Z=0.992 + bottom_offset=0.003) -->
     <model name="teamug">
-      <pose>-3 2 0.997 0 0 0</pose>
+      <pose>-3 2 0.997 0 0 3.14159</pose>
       <link name="link">
         <inertial>
           <mass>0.3</mass>
@@ -321,7 +321,7 @@
           <geometry>
             <mesh>
               <uri>../stl/teamug.stl</uri>
-              <scale>0.1 0.1 0.1</scale>
+              <scale>0.06 0.06 0.06</scale>
             </mesh>
           </geometry>
         </collision>
@@ -329,7 +329,7 @@
           <geometry>
             <mesh>
               <uri>../stl/teamug.stl</uri>
-              <scale>0.1 0.1 0.1</scale>
+              <scale>0.06 0.06 0.06</scale>
             </mesh>
           </geometry>
           <material>

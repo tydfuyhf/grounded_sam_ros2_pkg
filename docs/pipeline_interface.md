@@ -37,7 +37,8 @@ Gazebo / Isaac Sim
     EE depth + Top depth → ray-casting signed TSDF (40×40×40)
     VGN inference → NMS → 시맨틱 필터 (bbox_3d_world 기준)
         ├─▶ /grasp_candidates (JSON: Top-K grasp poses) — MoveIt2 입력
-        └─▶ /grasp_markers    (MarkerArray: RViz2 시각화)
+        ├─▶ /grasp_markers    (MarkerArray: RViz2 시각화)
+        └─▶ /tsdf_debug       (PointCloud2: TSDF 복셀 디버그, green=표면 red=내부 blue=근접외부)
 ```
 
 ---
@@ -164,6 +165,7 @@ VGN 추론 결과. quality 내림차순 정렬. TF 조회 실패 시 `frame="wor
 | `/world_map_result` | `std_msgs/String` | multi_view_projector_node |
 | `/grasp_candidates` | `std_msgs/String` | vgn_grasp_node |
 | `/grasp_markers` | `visualization_msgs/MarkerArray` | vgn_grasp_node |
+| `/tsdf_debug` | `sensor_msgs/PointCloud2` | vgn_grasp_node |
 
 ---
 
