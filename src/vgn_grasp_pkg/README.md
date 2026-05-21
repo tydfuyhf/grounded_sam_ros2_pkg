@@ -12,6 +12,18 @@ raw depth images → **signed TSDF** → **VGN grasp 후보 검출** → `/grasp
 
 ---
 
+## 모듈 구성
+
+```
+vgn_grasp_pkg/
+  vgn_grasp_node.py   — ROS 2 노드 (구독/발행/콜백/마커)
+  depth_utils.py      — depth 디코딩, K 추출, extrinsics YAML 로딩
+  tsdf_builder.py     — TSDF 빌드(ray-casting), debug용 포인트클라우드 변환 (ROS-free)
+  vgn_inference.py    — VGN 네트워크 로드/predict/process/select (ROS-free)
+```
+
+---
+
 ## 전제 조건
 
 ### 1. VGN 서브모듈 추가
@@ -129,6 +141,7 @@ ros2 launch vgn_grasp_pkg vgn_grasp.launch.py \
 | `/world_map_result` | `std_msgs/String` (JSON) | 카테고리별 centroid + bbox_3d_world — **트리거** |
 | `/grasp_candidates` | `std_msgs/String` (JSON) | Top-K grasp 후보 출력 |
 | `/grasp_markers` | `visualization_msgs/MarkerArray` | RViz2 시각화 |
+| `/tsdf_debug` | `sensor_msgs/PointCloud2` | TSDF 복셀 디버그 시각화 |
 
 > `/world_map`은 구독하지 않음 — RViz2 디버그 시각화 전용.
 
@@ -156,7 +169,9 @@ TF 조회 실패 시 `frame`은 `"world"`로 폴백.
 
 ---
 
-## RViz2 시각화 (`/grasp_markers`)
+## RViz2 시각화
+
+### `/grasp_markers`
 
 ```
 RViz2 → Add → MarkerArray → Topic: /grasp_markers
@@ -168,6 +183,21 @@ Fixed Frame: world
 | 화살표 | grasp approach 방향 (그리퍼 -Z축), 파란색 (밝을수록 quality 높음) |
 | 구 | grasp 위치 |
 | 납작한 원통 | gripper width |
+
+### `/tsdf_debug` — TSDF 복셀 확인
+
+```
+RViz2 → Add → PointCloud2 → Topic: /tsdf_debug
+Fixed Frame: world  |  Color Transformer: RGB8
+```
+
+| 색상 | tsdf 값 | 의미 |
+|---|---|---|
+| 초록 | 0.40 ~ 0.60 | 표면 |
+| 빨강 | < 0.40 | 물체 내부 |
+| 파랑 | 0.60 ~ 0.80 | 표면 바깥 근처 |
+
+tsdf ≥ 0.8 (빈 공간)은 표시 안 함. `/world_map_result` 트리거 때마다 갱신.
 
 ---
 
